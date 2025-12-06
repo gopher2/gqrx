@@ -38,6 +38,7 @@
 #include "qtgui/dockinputctl.h"
 #include "qtgui/dockfft.h"
 #include "qtgui/dockbookmarks.h"
+#include "qtgui/dockbandplan.h"
 #include "qtgui/dockrds.h"
 #include "qtgui/afsk1200win.h"
 #include "qtgui/iq_tool.h"
@@ -103,6 +104,7 @@ private:
     DockInputCtl   *uiDockInputCtl;
     DockFft        *uiDockFft;
     DockBookmarks  *uiDockBookmarks;
+    DockBandplan   *uiDockBandplan;
     DockRDS        *uiDockRDS;
 
     CIqTool        *iq_tool;

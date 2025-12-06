@@ -108,6 +108,17 @@ QList<BandInfo> BandPlan::getBandsInRange(qint64 low, qint64 high)
     return found;
 }
 
+QList<QPair<int, BandInfo>> BandPlan::getBandsInRangeWithIndex(qint64 low, qint64 high)
+{
+    QList<QPair<int, BandInfo>> found;
+    for (int i = 0; i < m_BandInfoList.size(); i++) {
+        if(m_BandInfoList[i].maxFrequency < low) continue;
+        if(m_BandInfoList[i].minFrequency > high) continue;
+        found.append(qMakePair(i, m_BandInfoList[i]));
+    }
+    return found;
+}
+
 QList<BandInfo> BandPlan::getBandsEncompassing(qint64 freq)
 {
     QList<BandInfo> found;
@@ -117,4 +128,55 @@ QList<BandInfo> BandPlan::getBandsEncompassing(qint64 freq)
         found.append(m_BandInfoList[i]);
     }
     return found;
+}
+
+bool BandPlan::save()
+{
+    QFile file(m_bandPlanFile);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+        return false;
+
+    QTextStream out(&file);
+    out << "# Band Plan for Gqrx\n";
+    out << "# minFrequency,maxFrequency,modulation,step,color,name\n";
+
+    for (int i = 0; i < m_BandInfoList.size(); i++)
+    {
+        const BandInfo& info = m_BandInfoList[i];
+        out << info.minFrequency << ","
+            << info.maxFrequency << ","
+            << info.modulation << ","
+            << info.step << ","
+            << info.color.name() << ","
+            << info.name << "\n";
+    }
+
+    file.close();
+    return true;
+}
+
+void BandPlan::addBand(const BandInfo& band)
+{
+    m_BandInfoList.append(band);
+    std::sort(m_BandInfoList.begin(), m_BandInfoList.end());
+    emit BandPlanChanged();
+}
+
+void BandPlan::removeBand(int index)
+{
+    if (index >= 0 && index < m_BandInfoList.size())
+    {
+        m_BandInfoList.removeAt(index);
+        emit BandPlanChanged();
+    }
+}
+
+void BandPlan::updateBand(int index, const BandInfo& band)
+{
+    if (index >= 0 && index < m_BandInfoList.size())
+    {
+        m_BandInfoList[index] = band;
+        std::sort(m_BandInfoList.begin(), m_BandInfoList.end());
+        emit BandPlanChanged();
+    }
 }

@@ -114,6 +114,8 @@ public:
 
     void setFftCenterFreq(qint64 f) {
         qint64 limit = ((qint64)m_SampleFreq - m_Span) / 2 - 1;
+        if (limit < 0)
+            limit = 0;
         m_FftCenter = qBound(-limit, f, limit);
     }
 
@@ -156,6 +158,7 @@ signals:
     void newSize();
     void markerSelectA(qint64 freq);
     void markerSelectB(qint64 freq);
+    void bandClicked(int bandIndex);
 
 public slots:
     // zoom functions
@@ -210,7 +213,8 @@ private:
         XAXIS,
         TAG,
         MARKER_A,
-        MARKER_B
+        MARKER_B,
+        BANDPLAN
     };
 
     void        drawOverlay();
@@ -347,6 +351,7 @@ private:
     QMap<int,qreal>   m_Peaks;
 
     QList< QPair<QRectF, qint64> >     m_Taglist;
+    QList< QPair<QRectF, int> >        m_BandRectList;  // Band rectangles with indices for click detection
 
     // Waterfall averaging
     quint64     tlast_wf_ms;        // last time waterfall has been updated

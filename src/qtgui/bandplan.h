@@ -39,12 +39,14 @@ struct BandInfo
     QString modulation;
     qint64  step;
     QColor  color;
+    bool    visible;
 
     BandInfo()
     {
         this->minFrequency = 0;
         this->maxFrequency = 0;
         this->step = 1;
+        this->visible = true;
     }
 
     bool operator<(const BandInfo &other) const
@@ -61,10 +63,16 @@ public:
     static void create();
     static BandPlan& Get();
     bool load();
+    bool save();
     int size() { return m_BandInfoList.size(); }
     BandInfo& getBand(int i) { return m_BandInfoList[i]; }
     QList<BandInfo> getBandsInRange(qint64 low, qint64 high);
+    QList<QPair<int, BandInfo>> getBandsInRangeWithIndex(qint64 low, qint64 high);
     QList<BandInfo> getBandsEncompassing(qint64 freq);
+
+    void addBand(const BandInfo& band);
+    void removeBand(int index);
+    void updateBand(int index, const BandInfo& band);
 
     void setConfigDir(const QString&);
 
