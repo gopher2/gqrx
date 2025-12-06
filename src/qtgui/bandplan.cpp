@@ -87,6 +87,9 @@ bool BandPlan::load()
             info.step         = strings[3].toInt();
             info.color        = QColor(strings[4].trimmed());
             info.name         = strings[5].trimmed();
+            // Read visible state if present; defaults to true for old files
+            if (strings.count() >= 7)
+                info.visible = (strings[6].trimmed() == "1");
 
             m_BandInfoList.append(info);
         }
@@ -138,7 +141,7 @@ bool BandPlan::save()
 
     QTextStream out(&file);
     out << "# Band Plan for Gqrx\n";
-    out << "# minFrequency,maxFrequency,modulation,step,color,name\n";
+    out << "# minFrequency,maxFrequency,modulation,step,color,name,visible\n";
 
     for (int i = 0; i < m_BandInfoList.size(); i++)
     {
@@ -148,7 +151,8 @@ bool BandPlan::save()
             << info.modulation << ","
             << info.step << ","
             << info.color.name() << ","
-            << info.name << "\n";
+            << info.name << ","
+            << (info.visible ? "1" : "0") << "\n";
     }
 
     file.close();
