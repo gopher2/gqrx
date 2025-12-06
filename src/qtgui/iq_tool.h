@@ -25,10 +25,15 @@
 
 #include <QDir>
 #include <QDockWidget>
+#include <QMenu>
 #include <QPalette>
 #include <QSettings>
+#include <QSortFilterProxyModel>
 #include <QString>
 #include <QTimer>
+
+#include "iq_file_model.h"
+#include "iq_file_delegate.h"
 
 namespace Ui {
     class CIqTool;
@@ -75,16 +80,28 @@ private slots:
     void on_recButton_clicked(bool checked);
     void on_playButton_clicked(bool checked);
     void on_slider_valueChanged(int value);
-    void on_listWidget_currentTextChanged(const QString &currentText);
+    void onSelectionChanged();
+    void onHeaderContextMenu(const QPoint &pos);
+    void onFileContextMenu(const QPoint &pos);
+    void onOpenInFinder();
+    void onEditFile();
+    void onDeleteFile();
     void timeoutFunction(void);
 
 private:
     void refreshDir(void);
     void refreshTimeWidgets(void);
+    void updateDiskSpace(void);
     void parseFileName(const QString &filename);
+    void setupTableView(void);
+    void updateFilenameColumnIndex(void);
 
 private:
     Ui::CIqTool *ui;
+
+    IqFileModel         *m_fileModel;
+    QSortFilterProxyModel *m_proxyModel;
+    IqFileDelegate      *m_delegate;
 
     QDir        *recdir;
     QTimer      *timer;

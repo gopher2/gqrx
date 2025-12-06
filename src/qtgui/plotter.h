@@ -114,6 +114,8 @@ public:
 
     void setFftCenterFreq(qint64 f) {
         qint64 limit = ((qint64)m_SampleFreq - m_Span) / 2 - 1;
+        if (limit < 0)
+            limit = 0;
         m_FftCenter = qBound(-limit, f, limit);
     }
 
