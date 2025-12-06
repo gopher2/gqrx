@@ -1788,7 +1788,9 @@ void CPlotter::draw(bool newData)
         }
 
         // Update the overlay if needed
-        if (m_DrawOverlay)
+        // Note: When bookmarks are enabled, overlay is redrawn every frame
+        // because bookmark lines depend on current FFT data
+        if (m_DrawOverlay || m_BookmarksEnabled || m_DXCSpotsEnabled)
         {
             drawOverlay();
             m_DrawOverlay = false;
@@ -2036,9 +2038,33 @@ void CPlotter::drawOverlay()
 
             QColor color = QColor(tag.GetColor());
             color.setAlpha(100);
-            // Vertical line
+            // Vertical line - dynamically stop above FFT signal
+            qreal lineBottom = xAxisTop;
+            const int ix = (int)x;
+            if (ix >= 0 && ix < m_fftDataSize)
+            {
+                const qreal plotHeight = m_2DPixmap.height();
+                const float panddBGainFactor = (float)plotHeight / fabsf(m_PandMaxdB - m_PandMindB);
+                // Use max hold if active, otherwise current FFT data based on plot mode
+                float fftVal;
+                if (m_MaxHoldActive)
+                    fftVal = m_fftMaxHoldBuf[ix];
+                else if (m_PlotMode == PLOT_MODE_AVG)
+                    fftVal = m_fftAvgBuf[ix];
+                else
+                    fftVal = m_fftMaxBuf[ix];
+                if (fftVal > 0.0f)
+                {
+                    const qreal ySignal = (qreal)std::max(std::min(
+                        panddBGainFactor * (m_PandMaxdB - 10.0f * log10f(fftVal)),
+                        (float)plotHeight), 0.0f);
+                    // Clearance for peak markers plus padding
+                    const qreal clearance = 12.0 * m_DPR + 10.0;
+                    lineBottom = std::min(lineBottom, ySignal - clearance);
+                }
+            }
             painter.setPen(QPen(color, m_DPR, Qt::DashLine));
-            painter.drawLine(QPointF(x, levelNHeightBottomSlant), QPointF(x, xAxisTop));
+            painter.drawLine(QPointF(x, levelNHeightBottomSlant), QPointF(x, lineBottom));
 
             // Horizontal line
             painter.setPen(QPen(color, m_DPR, Qt::SolidLine));
