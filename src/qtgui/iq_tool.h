@@ -111,6 +111,7 @@ private:
 
     bool    is_recording;
     bool    is_playing;
+    bool    m_columnsAutoSized{false}; /*!< Track if columns have been auto-sized */
     int     bytes_per_sample;  /*!< Bytes per sample (fc = 4) */
     int     sample_rate;       /*!< Current sample rate. */
     qint64  center_freq;       /*!< Center frequency. */

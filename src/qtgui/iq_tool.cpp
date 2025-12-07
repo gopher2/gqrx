@@ -645,6 +645,20 @@ void CIqTool::refreshDir()
     // Update model's directory and refresh
     m_fileModel->setDirectory(*recdir);
 
+    // Auto-size columns on first load (except filename which gets fixed width)
+    if (!m_columnsAutoSized && m_proxyModel->rowCount() > 0)
+    {
+        // Set filename column to fixed width
+        ui->tableView->setColumnWidth(0, 200);
+
+        // Auto-size all other columns to fit content
+        int colCount = m_proxyModel->columnCount();
+        for (int col = 1; col < colCount; ++col)
+            ui->tableView->resizeColumnToContents(col);
+
+        m_columnsAutoSized = true;
+    }
+
     // Restore selection if possible
     if (!selectedFile.isEmpty())
     {
