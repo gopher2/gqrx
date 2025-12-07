@@ -24,6 +24,7 @@
 #define MAINWINDOW_H
 
 #include <QColor>
+#include <QElapsedTimer>
 #include <QMainWindow>
 #include <QPointer>
 #include <QSettings>
@@ -96,6 +97,17 @@ private:
 
     std::vector<float> d_audioFftData;
     bool d_have_audio;  /*!< Whether we have audio (i.e. not with demod_off. */
+
+    /* Fast IQ playback state */
+    bool m_fastPlaybackActive{false};
+    int  m_fastPlaybackPrevDemod{0};
+    QTimer *m_fastPlaybackCheckTimer{nullptr};
+    QElapsedTimer m_fastPlaybackStartTime;
+    qint64 m_fastPlaybackFileSize{0};
+    float m_fastPlaybackSampleRate{0};
+    qint64 m_fastPlaybackRealDurationMs{0};  /*!< Real-time duration of file in ms */
+    unsigned int m_fastPlaybackLastRowPushed{0};  /*!< Last spectrogram row pushed to waterfall */
+    std::vector<float> m_spectrogramRowBuffer;    /*!< Buffer for reading spectrogram rows */
 
     /* dock widgets */
     DockRxOpt      *uiDockRxOpt;
@@ -197,7 +209,7 @@ private slots:
     /* I/Q playback and recording*/
     void startIqRecording(const QString& recdir, const QString& format);
     void stopIqRecording();
-    void startIqPlayback(const QString& filename, float samprate, qint64 center_freq);
+    void startIqPlayback(const QString& filename, float samprate, qint64 center_freq, bool fast);
     void stopIqPlayback();
     void seekIqFile(qint64 seek_pos);
 
@@ -261,6 +273,7 @@ private slots:
     void iqFftTimeout();
     void audioFftTimeout();
     void rdsTimeout();
+    void fastPlaybackCheckTimeout();
 };
 
 #endif // MAINWINDOW_H

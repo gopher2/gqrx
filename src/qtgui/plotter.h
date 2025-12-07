@@ -44,6 +44,7 @@ public:
     void setBookmarksEnabled(bool enabled) { m_BookmarksEnabled = enabled; }
     void setInvertScrolling(bool enabled) { m_InvertScrolling = enabled; }
     void setDXCSpotsEnabled(bool enabled) { m_DXCSpotsEnabled = enabled; }
+    void setFastPlaybackMode(bool enabled) { m_FastPlaybackMode = enabled; }
 
     void setNewFftData(const float *fftData, int size);
 
@@ -126,6 +127,7 @@ public:
     int     getNearestPeak(QPoint pt);
     void    setWaterfallSpan(quint64 span_ms);
     quint64 getWfTimeRes() const;
+    int     getWaterfallHeight() const;
     void    setFftRate(int rate_hz);
     void    clearWaterfallBuf();
 
@@ -296,6 +298,7 @@ private:
     bool        m_MarkersEnabled;     /*!< Show/hide markers on spectrum */
     bool        m_InvertScrolling;
     bool        m_DXCSpotsEnabled;    /*!< Show/hide DXC Spots on spectrum */
+    bool        m_FastPlaybackMode{}; /*!< Fast playback - bypass time gating for waterfall */
     int         m_DemodHiCutFreq;
     int         m_DemodLowCutFreq;
     int         m_DemodFreqX{};       //screen coordinate x position

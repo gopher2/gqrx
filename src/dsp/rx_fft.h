@@ -103,6 +103,18 @@ public:
     void set_quad_rate(double quad_rate);
     unsigned int fft_size() const {return d_fftsize;}
 
+    /* Spectrogram mode for fast playback */
+    void set_spectrogram_mode(bool enabled, unsigned int rows, double time_span_sec);
+    bool get_spectrogram_mode() const { return d_spectrogram_mode; }
+    void reset_spectrogram();
+    void finalize_spectrogram();  /*! Finalize all remaining buffered samples */
+    unsigned int get_spectrogram_rows() const { return d_spectrogram_rows; }
+    unsigned int get_completed_rows() const { return d_spectrogram_completed_rows; }
+    unsigned int get_total_ffts() const { return d_total_ffts_computed; }
+    int get_spectrogram_row(unsigned int row, float* data);
+    int get_global_maxhold(float* data);
+    bool is_spectrogram_complete() const { return d_spectrogram_completed_rows >= d_spectrogram_rows; }
+
 private:
     unsigned int d_fftsize;   /*! Current FFT size. */
     unsigned int d_startup_samples;
@@ -123,8 +135,21 @@ private:
     gr::buffer_reader_sptr d_reader;
     std::chrono::time_point<std::chrono::steady_clock> d_lasttime;
 
+    /* Spectrogram mode for fast playback */
+    bool d_spectrogram_mode{false};
+    unsigned int d_spectrogram_rows{0};          /*! Total rows in spectrogram */
+    unsigned int d_spectrogram_completed_rows{0}; /*! Rows fully computed */
+    unsigned int d_spectrogram_step_size{0};    /*! Samples per row (time window) */
+    std::vector<std::vector<float>> d_spectrogram_data; /*! 2D spectrogram buffer */
+    std::vector<float> d_global_maxhold;        /*! Global max-hold for FFT trace */
+    std::vector<float> d_spectrogram_row_max;   /*! MAX accumulator for current row */
+    unsigned int d_spectrogram_row_samples{0};  /*! Samples consumed for current row */
+    unsigned int d_total_ffts_computed{0};      /*! Total FFTs computed */
+    std::vector<gr_complex> d_spectrogram_sample_buffer; /*! Buffer for accumulating samples */
+
     void apply_window(unsigned int size);
     void update_window();
+    void compute_fft_to_buffer(float* output);  /*! Compute FFT to output buffer */
 };
 
 

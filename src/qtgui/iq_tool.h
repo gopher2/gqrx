@@ -60,11 +60,12 @@ public:
 
     void saveSettings(QSettings *settings);
     void readSettings(QSettings *settings);
+    void setPlaybackProgress(int seconds);  /*!< Update slider position without triggering seek */
 
 signals:
     void startRecording(const QString recdir, const QString format);
     void stopRecording();
-    void startPlayback(const QString filename, float samprate, qint64 center_freq);
+    void startPlayback(const QString filename, float samprate, qint64 center_freq, bool fast);
     void stopPlayback();
     void seek(qint64 seek_pos);
 

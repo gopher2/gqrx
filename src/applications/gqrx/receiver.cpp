@@ -72,6 +72,7 @@ receiver::receiver(const std::string input_device,
       d_iq_rev(false),
       d_dc_cancel(false),
       d_iq_balance(false),
+      d_audio_bypass(false),
       d_demod(RX_DEMOD_OFF)
 {
 
@@ -157,21 +158,37 @@ receiver::~receiver()
 /** Start the receiver. */
 void receiver::start()
 {
+    // DEBUG: Trace flowgraph start for fast playback testing
+    std::cout << "DEBUG receiver::start(): d_running was " << d_running << std::endl;
     if (!d_running)
     {
+        std::cout << "DEBUG receiver::start(): calling tb->start()" << std::endl;
         tb->start();
         d_running = true;
+        std::cout << "DEBUG receiver::start(): flowgraph started" << std::endl;
+    }
+    else
+    {
+        std::cout << "DEBUG receiver::start(): already running, skipped" << std::endl;
     }
 }
 
 /** Stop the receiver. */
 void receiver::stop()
 {
+    // DEBUG: Trace flowgraph stop for fast playback testing
+    std::cout << "DEBUG receiver::stop(): d_running was " << d_running << std::endl;
     if (d_running)
     {
+        std::cout << "DEBUG receiver::stop(): calling tb->stop()" << std::endl;
         tb->stop();
         tb->wait(); // If the graph is needed to run again, wait() must be called after stop
         d_running = false;
+        std::cout << "DEBUG receiver::stop(): flowgraph stopped" << std::endl;
+    }
+    else
+    {
+        std::cout << "DEBUG receiver::stop(): not running, skipped" << std::endl;
     }
 }
 
@@ -181,6 +198,10 @@ void receiver::stop()
  */
 void receiver::set_input_device(const std::string device)
 {
+    // DEBUG: Trace device changes for fast playback testing
+    std::cout << "DEBUG set_input_device: d_running=" << d_running << std::endl;
+    std::cout << "DEBUG set_input_device: new device=" << device << std::endl;
+
     qDebug() << "Set input device:";
     qDebug() << "  old:" << input_devstr.c_str();
     qDebug() << "  new:" << device.c_str();
@@ -364,6 +385,11 @@ double receiver::set_input_rate(double rate)
     rx->set_quad_rate(d_quad_rate);
     iq_fft->set_quad_rate(d_decim_rate);
     tb->unlock();
+
+    std::cout << "DEBUG set_input_rate: d_input_rate=" << d_input_rate
+              << " d_decim=" << d_decim
+              << " d_decim_rate=" << d_decim_rate
+              << " iq_fft quad_rate=" << d_decim_rate << std::endl;
 
     return d_input_rate;
 }
@@ -767,6 +793,66 @@ int receiver::get_audio_fft_data(float* fftPoints)
     return audio_fft->get_fft_data(fftPoints);
 }
 
+/** Enable spectrogram mode for fast playback. */
+void receiver::set_iq_fft_spectrogram_mode(bool enabled, unsigned int rows, double time_span_sec)
+{
+    iq_fft->set_spectrogram_mode(enabled, rows, time_span_sec);
+}
+
+/** Check if spectrogram mode is enabled. */
+bool receiver::get_iq_fft_spectrogram_mode() const
+{
+    return iq_fft->get_spectrogram_mode();
+}
+
+/** Reset spectrogram buffers. */
+void receiver::reset_iq_fft_spectrogram()
+{
+    iq_fft->reset_spectrogram();
+}
+
+/** Finalize spectrogram by processing all remaining buffered samples. */
+void receiver::finalize_iq_fft_spectrogram()
+{
+    iq_fft->finalize_spectrogram();
+}
+
+/** Get total number of spectrogram rows. */
+unsigned int receiver::get_iq_fft_spectrogram_rows() const
+{
+    return iq_fft->get_spectrogram_rows();
+}
+
+/** Get number of completed spectrogram rows. */
+unsigned int receiver::get_iq_fft_completed_rows() const
+{
+    return iq_fft->get_completed_rows();
+}
+
+/** Get total number of FFTs computed. */
+unsigned int receiver::get_iq_fft_total_ffts() const
+{
+    return iq_fft->get_total_ffts();
+}
+
+/** Get a completed spectrogram row. */
+int receiver::get_iq_fft_spectrogram_row(unsigned int row, float* data)
+{
+    return iq_fft->get_spectrogram_row(row, data);
+}
+
+/** Get global max-hold data. */
+int receiver::get_iq_fft_global_maxhold(float* data)
+{
+    return iq_fft->get_global_maxhold(data);
+}
+
+/** Check if spectrogram is complete. */
+bool receiver::is_iq_fft_spectrogram_complete() const
+{
+    return iq_fft->is_spectrogram_complete();
+}
+
 receiver::status receiver::set_nb_on(int nbid, bool on)
 {
     if (rx->has_nb())
@@ -866,21 +952,30 @@ receiver::status receiver::set_demod(rx_demod demod, bool force)
 {
     status ret = STATUS_OK;
 
+    // DEBUG: Trace demod changes for fast playback testing
+    std::cout << "DEBUG set_demod: requested demod=" << demod << " current=" << d_demod << " force=" << force << std::endl;
+
     if (!force && (demod == d_demod))
+    {
+        std::cout << "DEBUG set_demod: early return - demod unchanged" << std::endl;
         return ret;
+    }
 
     // tb->lock() seems to hang occasionally
     if (d_running)
     {
+        std::cout << "DEBUG set_demod: stopping running flowgraph" << std::endl;
         tb->stop();
         tb->wait();
     }
 
+    std::cout << "DEBUG set_demod: disconnecting all blocks" << std::endl;
     tb->disconnect_all();
 
     switch (demod)
     {
     case RX_DEMOD_OFF:
+        std::cout << "DEBUG set_demod: connecting with RX_CHAIN_NONE (no audio chain)" << std::endl;
         connect_all(RX_CHAIN_NONE);
         break;
 
@@ -930,9 +1025,17 @@ receiver::status receiver::set_demod(rx_demod demod, bool force)
     }
 
     d_demod = demod;
+    std::cout << "DEBUG set_demod: demod now set to " << d_demod << std::endl;
 
     if (d_running)
+    {
+        std::cout << "DEBUG set_demod: restarting flowgraph" << std::endl;
         tb->start();
+    }
+    else
+    {
+        std::cout << "DEBUG set_demod: flowgraph not running, not restarting" << std::endl;
+    }
 
     return ret;
 }
@@ -1276,6 +1379,43 @@ receiver::status receiver::seek_iq_file(long pos)
 }
 
 /**
+ * @brief Set audio bypass mode for fast IQ playback.
+ * @param bypass True to disconnect audio sink, false to reconnect.
+ *
+ * When bypass is enabled, the audio sink is replaced with null sinks,
+ * allowing the IQ file to be processed as fast as possible without being
+ * limited by real-time audio output.
+ */
+void receiver::set_audio_bypass(bool bypass)
+{
+    if (d_audio_bypass == bypass)
+        return;
+
+    d_audio_bypass = bypass;
+
+    tb->lock();
+
+    if (bypass)
+    {
+        // Replace audio sink with null sinks for full-speed playback
+        tb->disconnect(audio_gain0, 0, audio_snk, 0);
+        tb->disconnect(audio_gain1, 0, audio_snk, 1);
+        tb->connect(audio_gain0, 0, audio_null_sink0, 0);
+        tb->connect(audio_gain1, 0, audio_null_sink1, 0);
+    }
+    else
+    {
+        // Restore audio sink for normal playback
+        tb->disconnect(audio_gain0, 0, audio_null_sink0, 0);
+        tb->disconnect(audio_gain1, 0, audio_null_sink1, 0);
+        tb->connect(audio_gain0, 0, audio_snk, 0);
+        tb->connect(audio_gain1, 0, audio_snk, 1);
+    }
+
+    tb->unlock();
+}
+
+/**
  * @brief Start data sniffer.
  * @param buffsize The buffer that should be used in the sniffer.
  * @return STATUS_OK if the sniffer was started, STATUS_ERROR if the sniffer is already in use.
@@ -1335,6 +1475,9 @@ void receiver::get_sniffer_data(float * outbuff, unsigned int &num)
 /** Convenience function to connect all blocks. */
 void receiver::connect_all(rx_chain type)
 {
+    // DEBUG: Trace flowgraph connections for fast playback testing
+    std::cout << "DEBUG connect_all: type=" << type << " (0=NONE, 1=NBRX, 2=WFMRX)" << std::endl;
+
     gr::basic_block_sptr b;
 
     // Setup source
@@ -1391,6 +1534,7 @@ void receiver::connect_all(rx_chain type)
     // Audio path (if there is a receiver)
     if (type != RX_CHAIN_NONE)
     {
+        std::cout << "DEBUG connect_all: connecting audio chain (audio_snk connected)" << std::endl;
         tb->connect(b, 0, ddc, 0);
         tb->connect(ddc, 0, rx, 0);
         tb->connect(rx, 0, audio_fft, 0);
@@ -1400,6 +1544,10 @@ void receiver::connect_all(rx_chain type)
         tb->connect(rx, 1, audio_gain1, 0);
         tb->connect(audio_gain0, 0, audio_snk, 0);
         tb->connect(audio_gain1, 0, audio_snk, 1);
+    }
+    else
+    {
+        std::cout << "DEBUG connect_all: SKIPPING audio chain (RX_CHAIN_NONE - fast mode)" << std::endl;
     }
 
     // Recorders and sniffers

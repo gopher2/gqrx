@@ -216,6 +216,16 @@
       </widget>
      </item>
      <item>
+      <widget class="QCheckBox" name="fastPlaybackCheck">
+       <property name="toolTip">
+        <string>Play file as fast as possible (no throttling)</string>
+       </property>
+       <property name="text">
+        <string>Fast</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <spacer name="horizontalSpacer">
        <property name="orientation">
         <enum>Qt::Horizontal</enum>

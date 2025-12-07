@@ -440,8 +440,10 @@ void CIqTool::on_playButton_clicked(bool checked)
         {
             ui->tableView->setEnabled(false);
             ui->recButton->setEnabled(false);
+            ui->fastPlaybackCheck->setEnabled(false);
             emit startPlayback(recdir->absoluteFilePath(current_file),
-                               (float)sample_rate, center_freq);
+                               (float)sample_rate, center_freq,
+                               ui->fastPlaybackCheck->isChecked());
         }
     }
     else
@@ -449,6 +451,7 @@ void CIqTool::on_playButton_clicked(bool checked)
         emit stopPlayback();
         ui->tableView->setEnabled(true);
         ui->recButton->setEnabled(true);
+        ui->fastPlaybackCheck->setEnabled(true);
         ui->slider->setValue(0);
     }
 }
@@ -464,6 +467,7 @@ void CIqTool::cancelPlayback()
     ui->playButton->setChecked(false);
     ui->tableView->setEnabled(true);
     ui->recButton->setEnabled(true);
+    ui->fastPlaybackCheck->setEnabled(true);
     is_playing = false;
 }
 
@@ -767,4 +771,19 @@ void CIqTool::parseFileName(const QString &filename)
         sample_rate = sr;
     if (center_ok)
         center_freq = center;
+}
+
+/*! \brief Update slider position during fast playback.
+ *  Used during fast playback to update the slider position based on
+ *  calculated playback progress without triggering seek signals.
+ */
+void CIqTool::setPlaybackProgress(int seconds)
+{
+    if (!is_playing)
+        return;
+
+    ui->slider->blockSignals(true);
+    ui->slider->setValue(qBound(0, seconds, ui->slider->maximum()));
+    ui->slider->blockSignals(false);
+    refreshTimeWidgets();
 }

@@ -88,9 +88,8 @@ rx_fft_c::~rx_fft_c()
  *  \param input_items
  *  \param output_items
  *
- * This method does nothing except throwing the incoming samples into the
- * circular buffer.
- * FFT is only executed when the GUI asks for new FFT data via get_fft_data().
+ * In normal mode: throws incoming samples into circular buffer.
+ * In spectrogram mode: computes FFT for each block and accumulates into spectrogram.
  */
 int rx_fft_c::work(int noutput_items,
                    gr_vector_const_void_star &input_items,
@@ -99,7 +98,96 @@ int rx_fft_c::work(int noutput_items,
     const gr_complex *in = (const gr_complex*)input_items[0];
     (void) output_items;
 
-    /* just throw new samples into the buffer */
+    if (d_spectrogram_mode && d_spectrogram_completed_rows < d_spectrogram_rows)
+    {
+        /* Spectrogram mode: buffer samples and compute multiple FFTs per row (MAX) */
+        std::lock_guard<std::mutex> lock(d_in_mutex);
+
+        /* Add incoming samples to buffer */
+        d_spectrogram_sample_buffer.insert(d_spectrogram_sample_buffer.end(),
+                                           in, in + noutput_items);
+
+        unsigned int rows_before = d_spectrogram_completed_rows;
+
+        /* Process FFTs from buffer */
+        while (d_spectrogram_sample_buffer.size() >= d_fftsize &&
+               d_spectrogram_completed_rows < d_spectrogram_rows)
+        {
+            /* Copy samples to FFT input buffer with window */
+            gr_complex *dst = d_fft->get_inbuf();
+            if (d_window.size())
+            {
+                volk_32fc_32f_multiply_32fc(dst, d_spectrogram_sample_buffer.data(),
+                                            &d_window[0], d_fftsize);
+            }
+            else
+            {
+                memcpy(dst, d_spectrogram_sample_buffer.data(),
+                       sizeof(gr_complex) * d_fftsize);
+            }
+
+            /* Consume fftsize samples (no overlap for speed) */
+            d_spectrogram_sample_buffer.erase(d_spectrogram_sample_buffer.begin(),
+                                              d_spectrogram_sample_buffer.begin() + d_fftsize);
+            d_spectrogram_row_samples += d_fftsize;
+
+            /* Compute FFT */
+            d_fft->execute();
+            const std::complex<float> *fftOut = d_fft->get_outbuf();
+            d_total_ffts_computed++;
+
+            /* Convert to magnitude^2 and MAX into row accumulator */
+            for (unsigned int i = 0; i < d_fftsize/2; ++i)
+            {
+                float val = static_cast<float>(std::norm(fftOut[i + d_fftsize/2]));
+                if (val > d_spectrogram_row_max[i])
+                    d_spectrogram_row_max[i] = val;
+                /* Also update global max-hold */
+                if (val > d_global_maxhold[i])
+                    d_global_maxhold[i] = val;
+            }
+            for (unsigned int i = d_fftsize/2; i < d_fftsize; ++i)
+            {
+                float val = static_cast<float>(std::norm(fftOut[i - d_fftsize/2]));
+                if (val > d_spectrogram_row_max[i])
+                    d_spectrogram_row_max[i] = val;
+                if (val > d_global_maxhold[i])
+                    d_global_maxhold[i] = val;
+            }
+
+            /* Check if we've consumed enough samples for this row */
+            if (d_spectrogram_row_samples >= d_spectrogram_step_size)
+            {
+                /* Finalize row: copy MAX accumulator to row data */
+                std::copy(d_spectrogram_row_max.begin(), d_spectrogram_row_max.end(),
+                          d_spectrogram_data[d_spectrogram_completed_rows].begin());
+
+                /* Reset for next row */
+                std::fill(d_spectrogram_row_max.begin(), d_spectrogram_row_max.end(), 0.0f);
+                d_spectrogram_row_samples = 0;
+                d_spectrogram_completed_rows++;
+            }
+        }
+
+        /* Debug output when rows complete */
+        if (d_spectrogram_completed_rows > rows_before)
+        {
+            static unsigned int last_reported = 0;
+            if (d_spectrogram_completed_rows - last_reported >= 100 ||
+                d_spectrogram_completed_rows >= d_spectrogram_rows)
+            {
+                std::cout << "DEBUG rx_fft: Spectrogram progress "
+                          << d_spectrogram_completed_rows << "/" << d_spectrogram_rows
+                          << " rows, " << d_total_ffts_computed << " FFTs"
+                          << " buffer=" << d_spectrogram_sample_buffer.size() << std::endl;
+                last_reported = d_spectrogram_completed_rows;
+            }
+        }
+
+        return noutput_items;
+    }
+
+    /* Normal mode: just throw new samples into the buffer */
     int items_to_copy = std::min(noutput_items, (int)d_writer->bufsize());
     if (items_to_copy < noutput_items)
         in += (noutput_items - items_to_copy);
@@ -122,9 +210,20 @@ int rx_fft_c::work(int noutput_items,
 /*! \brief Get FFT data.
  *  \param fftPoints Buffer to copy FFT data
  *  \param fftSize Current FFT size (output).
+ *
+ * In spectrogram mode, returns the global max-hold data instead of computing
+ * a new FFT from the circular buffer.
  */
 int rx_fft_c::get_fft_data(float* fftPoints)
 {
+    /* In spectrogram mode, return global max-hold */
+    if (d_spectrogram_mode && d_global_maxhold.size() == d_fftsize)
+    {
+        std::lock_guard<std::mutex> lock(d_in_mutex);
+        memcpy(fftPoints, d_global_maxhold.data(), sizeof(float) * d_fftsize);
+        return 0;
+    }
+
     std::chrono::time_point<std::chrono::steady_clock> now = std::chrono::steady_clock::now();
     std::chrono::duration<double> diff = now - d_lasttime;
     diff = std::min(diff, std::chrono::duration<double>(d_writer->bufsize() / d_quadrate));
@@ -235,6 +334,191 @@ void rx_fft_c::update_window()
     if (d_normalize_energy)
         factor = std::sqrt(factor);
     volk_32f_s32f_normalize(d_window.data(), factor, d_fftsize);
+}
+
+/*! \brief Enable or disable spectrogram mode for fast playback.
+ *  \param enabled Whether to enable spectrogram mode
+ *  \param rows Number of rows in the spectrogram (waterfall height)
+ *  \param time_span_sec Total time span of the spectrogram in seconds
+ */
+void rx_fft_c::set_spectrogram_mode(bool enabled, unsigned int rows, double time_span_sec)
+{
+    std::lock_guard<std::mutex> lock(d_in_mutex);
+
+    if (enabled && rows > 0 && time_span_sec > 0 && d_quadrate > 0)
+    {
+        d_spectrogram_mode = true;
+        d_spectrogram_rows = rows;
+
+        /* Calculate step size - how many samples to advance between FFTs */
+        /* This determines the overlap: step_size < fftsize means overlap */
+        double total_samples = time_span_sec * d_quadrate;
+        d_spectrogram_step_size = std::max(1u, (unsigned int)(total_samples / rows));
+
+        unsigned int ffts_per_row = d_spectrogram_step_size / d_fftsize;
+        std::cout << "DEBUG rx_fft: Spectrogram mode enabled - rows=" << rows
+                  << " time_span=" << time_span_sec << "s"
+                  << " d_quadrate=" << d_quadrate
+                  << " d_fftsize=" << d_fftsize
+                  << " step_size=" << d_spectrogram_step_size
+                  << " ffts_per_row=" << ffts_per_row << std::endl;
+
+        /* Allocate buffers */
+        d_spectrogram_data.resize(rows);
+        for (auto& row : d_spectrogram_data)
+            row.resize(d_fftsize, 0.0f);
+
+        d_global_maxhold.resize(d_fftsize, 0.0f);
+        d_spectrogram_row_max.resize(d_fftsize, 0.0f);  // MAX accumulator for current row
+        d_spectrogram_sample_buffer.clear();
+        d_spectrogram_sample_buffer.reserve(d_fftsize * 2);  // Reserve space for buffering
+
+        /* Reset counters */
+        d_spectrogram_completed_rows = 0;
+        d_spectrogram_row_samples = 0;
+        d_total_ffts_computed = 0;
+    }
+    else
+    {
+        std::cout << "DEBUG rx_fft: Spectrogram mode disabled" << std::endl;
+        d_spectrogram_mode = false;
+        /* Reset startup samples so normal FFT waits for new data */
+        d_startup_samples = 0;
+    }
+}
+
+/*! \brief Reset spectrogram buffers without changing mode. */
+void rx_fft_c::reset_spectrogram()
+{
+    std::lock_guard<std::mutex> lock(d_in_mutex);
+
+    for (auto& row : d_spectrogram_data)
+        std::fill(row.begin(), row.end(), 0.0f);
+
+    std::fill(d_global_maxhold.begin(), d_global_maxhold.end(), 0.0f);
+    d_spectrogram_sample_buffer.clear();
+
+    d_spectrogram_completed_rows = 0;
+    d_total_ffts_computed = 0;
+}
+
+/*! \brief Finalize spectrogram by processing all remaining buffered samples.
+ *  Call this when the file source reaches EOF to ensure all data is processed.
+ */
+void rx_fft_c::finalize_spectrogram()
+{
+    if (!d_spectrogram_mode || d_spectrogram_completed_rows >= d_spectrogram_rows)
+        return;
+
+    std::lock_guard<std::mutex> lock(d_in_mutex);
+
+    unsigned int ffts_processed = 0;
+
+    /* Process any remaining complete FFTs in the buffer */
+    while (d_spectrogram_sample_buffer.size() >= d_fftsize &&
+           d_spectrogram_completed_rows < d_spectrogram_rows)
+    {
+        /* Copy samples to FFT input buffer with window */
+        gr_complex *dst = d_fft->get_inbuf();
+        if (d_window.size())
+        {
+            volk_32fc_32f_multiply_32fc(dst, d_spectrogram_sample_buffer.data(),
+                                        &d_window[0], d_fftsize);
+        }
+        else
+        {
+            memcpy(dst, d_spectrogram_sample_buffer.data(),
+                   sizeof(gr_complex) * d_fftsize);
+        }
+
+        /* Consume fftsize samples */
+        d_spectrogram_sample_buffer.erase(d_spectrogram_sample_buffer.begin(),
+                                          d_spectrogram_sample_buffer.begin() + d_fftsize);
+        d_spectrogram_row_samples += d_fftsize;
+
+        /* Compute FFT */
+        d_fft->execute();
+        const std::complex<float> *fftOut = d_fft->get_outbuf();
+        d_total_ffts_computed++;
+        ffts_processed++;
+
+        /* Convert to magnitude^2 and MAX into row accumulator */
+        for (unsigned int i = 0; i < d_fftsize/2; ++i)
+        {
+            float val = static_cast<float>(std::norm(fftOut[i + d_fftsize/2]));
+            if (val > d_spectrogram_row_max[i])
+                d_spectrogram_row_max[i] = val;
+            if (val > d_global_maxhold[i])
+                d_global_maxhold[i] = val;
+        }
+        for (unsigned int i = d_fftsize/2; i < d_fftsize; ++i)
+        {
+            float val = static_cast<float>(std::norm(fftOut[i - d_fftsize/2]));
+            if (val > d_spectrogram_row_max[i])
+                d_spectrogram_row_max[i] = val;
+            if (val > d_global_maxhold[i])
+                d_global_maxhold[i] = val;
+        }
+
+        /* Check if we've consumed enough samples for this row */
+        if (d_spectrogram_row_samples >= d_spectrogram_step_size)
+        {
+            /* Finalize row */
+            std::copy(d_spectrogram_row_max.begin(), d_spectrogram_row_max.end(),
+                      d_spectrogram_data[d_spectrogram_completed_rows].begin());
+            std::fill(d_spectrogram_row_max.begin(), d_spectrogram_row_max.end(), 0.0f);
+            d_spectrogram_row_samples = 0;
+            d_spectrogram_completed_rows++;
+        }
+    }
+
+    /* If there's a partial row with some FFTs computed, finalize it anyway */
+    bool has_partial_data = false;
+    for (unsigned int i = 0; i < d_fftsize && !has_partial_data; ++i)
+    {
+        if (d_spectrogram_row_max[i] > 0.0f)
+            has_partial_data = true;
+    }
+
+    if (has_partial_data && d_spectrogram_completed_rows < d_spectrogram_rows)
+    {
+        std::copy(d_spectrogram_row_max.begin(), d_spectrogram_row_max.end(),
+                  d_spectrogram_data[d_spectrogram_completed_rows].begin());
+        std::fill(d_spectrogram_row_max.begin(), d_spectrogram_row_max.end(), 0.0f);
+        d_spectrogram_row_samples = 0;
+        d_spectrogram_completed_rows++;
+    }
+
+    std::cout << "DEBUG rx_fft: finalize_spectrogram processed " << ffts_processed
+              << " additional FFTs, completed_rows=" << d_spectrogram_completed_rows
+              << "/" << d_spectrogram_rows << std::endl;
+}
+
+/*! \brief Get a completed spectrogram row.
+ *  \param row Row index to retrieve
+ *  \param data Buffer to copy row data (must be fftsize floats)
+ *  \return 0 on success, -1 if row not yet completed
+ */
+int rx_fft_c::get_spectrogram_row(unsigned int row, float* data)
+{
+    std::lock_guard<std::mutex> lock(d_in_mutex);
+
+    if (row >= d_spectrogram_completed_rows)
+        return -1;
+
+    memcpy(data, d_spectrogram_data[row].data(), sizeof(float) * d_fftsize);
+    return 0;
+}
+
+/*! \brief Get global max-hold data (max across entire file).
+ *  \param data Buffer to copy max-hold data (must be fftsize floats)
+ *  \return 0 on success
+ */
+int rx_fft_c::get_global_maxhold(float* data)
+{
+    std::lock_guard<std::mutex> lock(d_in_mutex);
+    memcpy(data, d_global_maxhold.data(), sizeof(float) * d_fftsize);
+    return 0;
 }
 
 

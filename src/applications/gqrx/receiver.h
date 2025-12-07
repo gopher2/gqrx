@@ -167,6 +167,18 @@ public:
     int         get_audio_fft_data(float* fftPoints);
     unsigned int audio_fft_size(void) const;
 
+    /* Spectrogram mode for fast playback */
+    void        set_iq_fft_spectrogram_mode(bool enabled, unsigned int rows, double time_span_sec);
+    bool        get_iq_fft_spectrogram_mode(void) const;
+    void        reset_iq_fft_spectrogram(void);
+    void        finalize_iq_fft_spectrogram(void);
+    unsigned int get_iq_fft_spectrogram_rows(void) const;
+    unsigned int get_iq_fft_completed_rows(void) const;
+    unsigned int get_iq_fft_total_ffts(void) const;
+    int         get_iq_fft_spectrogram_row(unsigned int row, float* data);
+    int         get_iq_fft_global_maxhold(float* data);
+    bool        is_iq_fft_spectrogram_complete(void) const;
+
     /* Noise blanker */
     status      set_nb_on(int nbid, bool on);
     status      set_nb_threshold(int nbid, float threshold);
@@ -184,6 +196,7 @@ public:
     status      set_agc_manual_gain(int gain);
 
     status      set_demod(rx_demod demod, bool force=false);
+    rx_demod    get_demod() const { return d_demod; }
 
     /* FM parameters */
     status      set_fm_maxdev(float maxdev_hz);
@@ -210,6 +223,7 @@ public:
     status      start_iq_recording(const std::string filename);
     status      stop_iq_recording();
     status      seek_iq_file(long pos);
+    void        set_audio_bypass(bool bypass);
 
     /* sample sniffer */
     status      start_sniffer(unsigned int samplrate, int buffsize);
@@ -249,6 +263,7 @@ private:
     bool        d_iq_rev;           /*!< Whether I/Q is reversed or not. */
     bool        d_dc_cancel;        /*!< Enable automatic DC removal. */
     bool        d_iq_balance;       /*!< Enable automatic IQ balance. */
+    bool        d_audio_bypass;     /*!< Bypass audio sink for fast playback. */
 
     std::string input_devstr;  /*!< Current input device string. */
     std::string output_devstr; /*!< Current output device string. */
