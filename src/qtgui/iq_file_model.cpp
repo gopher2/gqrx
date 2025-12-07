@@ -90,7 +90,8 @@ QVariant IqFileModel::data(const QModelIndex &index, int role) const
         case IqFileColumn::Filename:
             return info.filename;
         case IqFileColumn::DateTime:
-            return info.dateTime.isValid() ? info.dateTime.toString("yyyy-MM-dd hh:mm:ss") : "n/a";
+            // Convert from stored UTC to local time for display
+            return info.dateTime.isValid() ? info.dateTime.toLocalTime().toString("yyyy-MM-dd h:mm:ss AP") : "n/a";
         case IqFileColumn::Frequency:
             return info.centerFreq > 0 ? formatFrequency(info.centerFreq) : "n/a";
         case IqFileColumn::SampleRate:
