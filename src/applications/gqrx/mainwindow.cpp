@@ -1730,7 +1730,7 @@ void MainWindow::startIqPlayback(const QString& filename, float samprate, qint64
     {
         QMessageBox::warning(this, tr("Playback Error"),
                              tr("Cannot play file: file is empty or does not exist."));
-        uiDockIqPlay->cancelPlayback();
+        iq_tool->cancelPlayback();
         return;
     }
 
