@@ -1724,6 +1724,16 @@ void MainWindow::stopIqRecording()
 
 void MainWindow::startIqPlayback(const QString& filename, float samprate, qint64 center_freq)
 {
+    // Check for empty or invalid file
+    QFileInfo fileCheck(filename);
+    if (!fileCheck.exists() || fileCheck.size() == 0)
+    {
+        QMessageBox::warning(this, tr("Playback Error"),
+                             tr("Cannot play file: file is empty or does not exist."));
+        uiDockIqPlay->cancelPlayback();
+        return;
+    }
+
     if (ui->actionDSP->isChecked())
     {
         // suspend DSP while we reload settings
