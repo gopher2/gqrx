@@ -92,14 +92,6 @@ void BookmarksTagList::updateTags()
 {
     m_bUpdating = true;
 
-    // Remember which items were unchecked.
-    QStringList unchecked;
-    for(int i=0; i<rowCount(); i++)
-    {
-        if(item(i,1)->checkState()==Qt::Unchecked)
-            unchecked.append(item(i,1)->text());
-    }
-
     // Get current List of Tags.
     QList<TagInfo::sptr> newTags = Bookmarks::Get().getTagList();
     if(!m_bShowUntagged)
@@ -115,14 +107,14 @@ void BookmarksTagList::updateTags()
         }
     }
 
-    // Rebuild List in GUI.
+    // Rebuild List in GUI using active state from model.
     clear();
     setSortingEnabled(false);
     setRowCount(0);
     for(int i=0; i<newTags.count(); i++)
     {
         AddTag(newTags[i]->name,
-                  ( unchecked.contains(newTags[i]->name) ? Qt::Unchecked : Qt::Checked ),
+                  ( newTags[i]->active ? Qt::Checked : Qt::Unchecked ),
                   newTags[i]->color);
     }
     setSortingEnabled(true);
