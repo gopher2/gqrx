@@ -901,6 +901,17 @@ void CPlotter::mouseDoubleClickEvent(QMouseEvent * event)
             if (peakX != -1)
             {
                 qint64 freq = freqFromX(peakX);
+
+                // Snap to nearby bookmark if within 1 kHz tolerance
+                const qint64 snapTolerance = 1000;  // 1 kHz
+                for (const auto & tag : m_Taglist) {
+                    qint64 bookmarkFreq = tag.second;
+                    if (qAbs(freq - bookmarkFreq) <= snapTolerance) {
+                        freq = bookmarkFreq;
+                        break;
+                    }
+                }
+
                 // Toggle pinned peak label at this frequency
                 if (m_PinnedPeaks.contains(freq)) {
                     m_PinnedPeaks.remove(freq);
