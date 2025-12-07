@@ -150,6 +150,7 @@ bool BandPlanTableModel::setData(const QModelIndex &index, const QVariant &value
     {
         band.visible = (value.toInt() == Qt::Checked);
         BandPlan::Get().updateBand(row, band);
+        BandPlan::Get().save();
         emit dataChanged(index, index);
         return true;
     }
