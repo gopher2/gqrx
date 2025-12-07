@@ -14,13 +14,21 @@
 #define MAX_SCREENSIZE 16384
 #define MAX_HISTOGRAM_SIZE 128   // Multiples of 4 for alignment
 
-#define PEAK_CLICK_MAX_H_DISTANCE 10 //Maximum horizontal distance of clicked point from peak
-#define PEAK_CLICK_MAX_V_DISTANCE 20 //Maximum vertical distance of clicked point from peak
+#define PEAK_CLICK_MAX_H_DISTANCE 15 //Maximum horizontal distance of clicked point from peak
+#define PEAK_CLICK_MAX_V_DISTANCE 25 //Maximum vertical distance of clicked point from peak
 #define PEAK_WINDOW_HALF_WIDTH    10
 #define PEAK_UPDATE_PERIOD       100 // msec
 #define PLOTTER_UPDATE_LIMIT_MS   16 // 16ms = 62.5 Hz
 
 #define MARKER_OFF std::numeric_limits<qint64>::min()
+
+// Info for a pinned peak label
+struct PinnedPeakInfo {
+    qreal labelOffsetX;  // Offset from frequency X position (follows freq when zooming)
+    qreal labelY;        // Absolute Y position in plot (doesn't bounce with signal)
+    bool  labelYInitialized; // Whether labelY has been set from initial peak position
+    QRectF labelRect;    // Current label rect for hit testing
+};
 
 class CPlotter : public QFrame
 {
@@ -171,6 +179,13 @@ public slots:
 
     // other FFT slots
     void setFftPlotColor(const QColor& color);
+    void setFftBgColor(const QColor& color);
+    void setFftGridColor(const QColor& color);
+    void setFftGridStyle(int style);
+    void setBookmarkFontSize(int size);
+    void setMaxHoldColor(const QColor& color);
+    void setMinHoldColor(const QColor& color);
+    void setPeakColor(const QColor& color);
     void enableFftFill(bool enabled);
     void enableMaxHold(bool enabled);
     void enableMinHold(bool enabled);
@@ -200,6 +215,7 @@ protected:
     void mouseMoveEvent(QMouseEvent * event) override;
     void mousePressEvent(QMouseEvent * event) override;
     void mouseReleaseEvent(QMouseEvent * event) override;
+    void mouseDoubleClickEvent(QMouseEvent * event) override;
     void wheelEvent( QWheelEvent * event ) override;
 
 private:
@@ -212,7 +228,8 @@ private:
         XAXIS,
         TAG,
         MARKER_A,
-        MARKER_B
+        MARKER_B,
+        PEAK_LABEL
     };
 
     void        drawOverlay();
@@ -343,10 +360,19 @@ private:
 
     quint32     m_LastSampleRate{};
 
-    QColor      m_FftFillCol, m_FilledModeFillCol, m_FilledModeMaxLineCol, m_FilledModeAvgLineCol, m_MainLineCol, m_HoldLineCol;
+    QColor      m_FftFillCol, m_FilledModeFillCol, m_FilledModeMaxLineCol, m_FilledModeAvgLineCol, m_MainLineCol;
+    QColor      m_MaxHoldColor;    /*!< Max hold line color. */
+    QColor      m_MinHoldColor;    /*!< Min hold line color. */
+    QColor      m_PeakColor;       /*!< Peak marker color. */
+    QColor      m_FftBgColor;      /*!< FFT background color. */
+    QColor      m_FftGridColor;    /*!< FFT grid line color. */
+    QVector<qreal> m_FftGridPattern; /*!< FFT grid line dash pattern. */
+    int         m_BookmarkFontSize{14}; /*!< Bookmark label font size in points. */
     bool        m_FftFill{};
 
     QMap<int,qreal>   m_Peaks;
+    QMap<qint64, PinnedPeakInfo> m_PinnedPeaks;  // Pinned peak labels by frequency
+    qint64      m_DraggedPeakFreq{};             // Frequency of label being dragged
 
     QList< QPair<QRectF, qint64> >     m_Taglist;
 

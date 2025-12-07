@@ -71,6 +71,13 @@ signals:
     void gotoFftCenter(void);                      /*! Go to FFT center. */
     void gotoDemodFreq(void);                      /*! Center FFT around demodulator frequency. */
     void fftColorChanged(const QColor &);          /*! FFT color has changed. */
+    void fftBgColorChanged(const QColor &);        /*! FFT background color has changed. */
+    void fftGridColorChanged(const QColor &);      /*! FFT grid color has changed. */
+    void fftGridStyleChanged(int style);           /*! FFT grid line style changed. */
+    void bookmarkFontSizeChanged(int size);        /*! Bookmark label font size changed. */
+    void maxHoldColorChanged(const QColor &);      /*! Max hold line color changed. */
+    void minHoldColorChanged(const QColor &);      /*! Min hold line color changed. */
+    void peakColorChanged(const QColor &);         /*! Peak marker color changed. */
     void fftFillToggled(bool fill);                /*! Toggle filling area under FFT plot. */
     void fftMaxHoldToggled(bool enable);           /*! Toggle max hold in FFT area. */
     void fftMinHoldToggled(bool enable);           /*! Toggle min hold in FFT area. */
@@ -105,6 +112,13 @@ private slots:
     void on_centerButton_clicked(void);
     void on_demodButton_clicked(void);
     void on_colorPicker_colorChanged(const QColor &);
+    void on_bgColorButton_clicked();
+    void on_gridColorButton_clicked();
+    void on_gridStyleCombo_currentIndexChanged(int index);
+    void on_bookmarkFontSizeSpinBox_valueChanged(int value);
+    void on_maxHoldColorButton_clicked();
+    void on_minHoldColorButton_clicked();
+    void on_peakColorButton_clicked();
     void on_fillCheckBox_stateChanged(int state);
     void on_maxHoldCheckBox_stateChanged(int state);
     void on_minHoldCheckBox_stateChanged(int state);
@@ -116,8 +130,8 @@ private slots:
 
 private:
     void updateInfoLabels(void);
+    void updateColorButton(QPushButton *btn, const QColor &color);
 
-private:
     Ui::DockFft   * ui;
 //    float         m_maximumFftDb;
 //    float         m_minimumFftDb;
@@ -125,6 +139,11 @@ private:
     bool          m_pand_last_modified; /* Flag to indicate which slider was changed last */
     float         m_actual_frame_rate;
     bool          m_frame_dropping;
+    QColor        m_bgColor;
+    QColor        m_gridColor;
+    QColor        m_maxHoldColor;
+    QColor        m_minHoldColor;
+    QColor        m_peakColor;
 };
 
 #endif // DOCKFFT_H

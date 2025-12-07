@@ -294,6 +294,13 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     connect(uiDockFft, SIGNAL(waterfallRangeChanged(float,float)),
             ui->plotter, SLOT(setWaterfallRange(float,float)));
     connect(uiDockFft, SIGNAL(fftColorChanged(QColor)), this, SLOT(setFftColor(QColor)));
+    connect(uiDockFft, SIGNAL(fftBgColorChanged(QColor)), ui->plotter, SLOT(setFftBgColor(QColor)));
+    connect(uiDockFft, SIGNAL(fftGridColorChanged(QColor)), ui->plotter, SLOT(setFftGridColor(QColor)));
+    connect(uiDockFft, SIGNAL(fftGridStyleChanged(int)), ui->plotter, SLOT(setFftGridStyle(int)));
+    connect(uiDockFft, SIGNAL(bookmarkFontSizeChanged(int)), ui->plotter, SLOT(setBookmarkFontSize(int)));
+    connect(uiDockFft, SIGNAL(maxHoldColorChanged(QColor)), ui->plotter, SLOT(setMaxHoldColor(QColor)));
+    connect(uiDockFft, SIGNAL(minHoldColorChanged(QColor)), ui->plotter, SLOT(setMinHoldColor(QColor)));
+    connect(uiDockFft, SIGNAL(peakColorChanged(QColor)), ui->plotter, SLOT(setPeakColor(QColor)));
     connect(uiDockFft, SIGNAL(fftFillToggled(bool)), this, SLOT(enableFftFill(bool)));
     connect(uiDockFft, SIGNAL(fftMaxHoldToggled(bool)), ui->plotter, SLOT(enableMaxHold(bool)));
     connect(uiDockFft, SIGNAL(fftMinHoldToggled(bool)), ui->plotter, SLOT(enableMinHold(bool)));

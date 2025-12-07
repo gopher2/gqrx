@@ -131,7 +131,7 @@
           <property name="verticalSpacing">
            <number>0</number>
           </property>
-          <item row="8" column="1">
+          <item row="20" column="1">
            <layout class="QHBoxLayout" name="horizontalLayout">
             <property name="spacing">
              <number>6</number>
@@ -182,7 +182,7 @@
             </item>
            </layout>
           </item>
-          <item row="18" column="0">
+          <item row="26" column="0">
            <widget class="QLabel" name="label_21">
             <property name="sizePolicy">
              <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
@@ -195,7 +195,7 @@
             </property>
            </widget>
           </item>
-          <item row="16" column="0">
+          <item row="25" column="0">
            <widget class="QLabel" name="label_6">
             <property name="sizePolicy">
              <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
@@ -211,7 +211,7 @@
             </property>
            </widget>
           </item>
-          <item row="13" column="1">
+          <item row="23" column="1">
            <layout class="QHBoxLayout" name="horizontalLayout_3" stretch="0,1,0">
             <property name="spacing">
              <number>6</number>
@@ -278,7 +278,7 @@
             </item>
            </layout>
           </item>
-          <item row="18" column="1">
+          <item row="26" column="1">
            <layout class="QHBoxLayout" name="horizontalLayout_16" stretch="1,0">
             <property name="spacing">
              <number>6</number>
@@ -332,7 +332,7 @@
             </item>
            </layout>
           </item>
-          <item row="12" column="1">
+          <item row="22" column="1">
            <layout class="QHBoxLayout" name="horizontalLayout_13">
             <property name="spacing">
              <number>6</number>
@@ -378,7 +378,447 @@
             </item>
            </layout>
           </item>
-          <item row="8" column="0">
+          <item row="7" column="0" colspan="2">
+           <spacer name="spacerAboveColorSep1">
+            <property name="orientation">
+             <enum>Qt::Vertical</enum>
+            </property>
+            <property name="sizeType">
+             <enum>QSizePolicy::Fixed</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>0</width>
+              <height>6</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item row="8" column="0" colspan="2">
+           <widget class="QFrame" name="colorSeparator1">
+            <property name="frameShape">
+             <enum>QFrame::HLine</enum>
+            </property>
+            <property name="frameShadow">
+             <enum>QFrame::Sunken</enum>
+            </property>
+           </widget>
+          </item>
+          <item row="9" column="0" colspan="2">
+           <spacer name="spacerBelowColorSep1">
+            <property name="orientation">
+             <enum>Qt::Vertical</enum>
+            </property>
+            <property name="sizeType">
+             <enum>QSizePolicy::Fixed</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>0</width>
+              <height>6</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item row="10" column="0">
+           <widget class="QLabel" name="label_bgColor">
+            <property name="text">
+             <string>Colors</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item row="10" column="1">
+           <layout class="QHBoxLayout" name="horizontalLayout_bgGridColors">
+            <item>
+             <widget class="QLabel" name="label_bg">
+              <property name="text">
+               <string>Background</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="bgColorButton">
+              <property name="minimumSize">
+               <size>
+                <width>24</width>
+                <height>24</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>24</width>
+                <height>24</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>FFT background color</string>
+              </property>
+              <property name="text">
+               <string/>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="label_grid">
+              <property name="text">
+               <string>Grid</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="gridColorButton">
+              <property name="minimumSize">
+               <size>
+                <width>24</width>
+                <height>24</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>24</width>
+                <height>24</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>FFT grid line color</string>
+              </property>
+              <property name="text">
+               <string/>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="horizontalSpacer_bgGrid">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>0</width>
+                <height>0</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+          <item row="11" column="0">
+           <widget class="QLabel" name="gridStyleLabel">
+            <property name="text">
+             <string>Grid Style</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item row="11" column="1">
+           <layout class="QHBoxLayout" name="horizontalLayout_gridStyle">
+            <item>
+             <widget class="QComboBox" name="gridStyleCombo">
+              <property name="toolTip">
+               <string>Grid line style</string>
+              </property>
+              <item>
+               <property name="text">
+                <string>Fine Dots</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Dots</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Sparse Dots</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Short Dash</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Long Dash</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Sparse Dash</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Solid</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+            <item>
+             <spacer name="horizontalSpacer_gridStyle">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>0</width>
+                <height>0</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+          <item row="12" column="0">
+           <widget class="QLabel" name="label_holdColors">
+            <property name="text">
+             <string>Hold/Peak</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item row="12" column="1">
+           <layout class="QHBoxLayout" name="horizontalLayout_holdPeakColors">
+            <item>
+             <widget class="QLabel" name="label_max">
+              <property name="text">
+               <string>Max</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="maxHoldColorButton">
+              <property name="minimumSize">
+               <size>
+                <width>24</width>
+                <height>24</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>24</width>
+                <height>24</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>Max hold line color</string>
+              </property>
+              <property name="text">
+               <string/>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="label_min">
+              <property name="text">
+               <string>Min</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="minHoldColorButton">
+              <property name="minimumSize">
+               <size>
+                <width>24</width>
+                <height>24</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>24</width>
+                <height>24</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>Min hold line color</string>
+              </property>
+              <property name="text">
+               <string/>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="label_peak">
+              <property name="text">
+               <string>Peak</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="peakColorButton">
+              <property name="minimumSize">
+               <size>
+                <width>24</width>
+                <height>24</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>24</width>
+                <height>24</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>Peak marker color</string>
+              </property>
+              <property name="text">
+               <string/>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="horizontalSpacer_holdPeak">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>0</width>
+                <height>0</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+          <item row="13" column="0" colspan="2">
+           <spacer name="spacerAboveColorSep2">
+            <property name="orientation">
+             <enum>Qt::Vertical</enum>
+            </property>
+            <property name="sizeType">
+             <enum>QSizePolicy::Fixed</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>0</width>
+              <height>6</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item row="14" column="0" colspan="2">
+           <widget class="QFrame" name="colorSeparator2">
+            <property name="frameShape">
+             <enum>QFrame::HLine</enum>
+            </property>
+            <property name="frameShadow">
+             <enum>QFrame::Sunken</enum>
+            </property>
+           </widget>
+          </item>
+          <item row="15" column="0" colspan="2">
+           <spacer name="spacerBelowColorSep2">
+            <property name="orientation">
+             <enum>Qt::Vertical</enum>
+            </property>
+            <property name="sizeType">
+             <enum>QSizePolicy::Fixed</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>0</width>
+              <height>6</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item row="16" column="0">
+           <widget class="QLabel" name="label_bookmarkFont">
+            <property name="text">
+             <string>Bookmark</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+           </widget>
+          </item>
+          <item row="16" column="1">
+           <layout class="QHBoxLayout" name="horizontalLayout_bookmarkFont">
+            <item>
+             <widget class="QSpinBox" name="bookmarkFontSizeSpinBox">
+              <property name="toolTip">
+               <string>Bookmark label font size</string>
+              </property>
+              <property name="suffix">
+               <string> pt</string>
+              </property>
+              <property name="minimum">
+               <number>6</number>
+              </property>
+              <property name="maximum">
+               <number>48</number>
+              </property>
+              <property name="value">
+               <number>14</number>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="horizontalSpacer_bookmarkFont">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>0</width>
+                <height>0</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+          <item row="17" column="0" colspan="2">
+           <spacer name="spacerAboveShowSep">
+            <property name="orientation">
+             <enum>Qt::Vertical</enum>
+            </property>
+            <property name="sizeType">
+             <enum>QSizePolicy::Fixed</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>0</width>
+              <height>6</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item row="18" column="0" colspan="2">
+           <widget class="QFrame" name="showSeparator">
+            <property name="frameShape">
+             <enum>QFrame::HLine</enum>
+            </property>
+            <property name="frameShadow">
+             <enum>QFrame::Sunken</enum>
+            </property>
+           </widget>
+          </item>
+          <item row="19" column="0" colspan="2">
+           <spacer name="spacerBelowShowSep">
+            <property name="orientation">
+             <enum>Qt::Vertical</enum>
+            </property>
+            <property name="sizeType">
+             <enum>QSizePolicy::Fixed</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>0</width>
+              <height>6</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item row="20" column="0">
            <widget class="QLabel" name="label_7">
             <property name="sizePolicy">
              <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
@@ -500,7 +940,7 @@
             </property>
            </widget>
           </item>
-          <item row="14" column="1">
+          <item row="24" column="1">
            <layout class="QHBoxLayout" name="horizontalLayout_15" stretch="1,0">
             <property name="spacing">
              <number>6</number>
@@ -940,7 +1380,7 @@
             </property>
            </widget>
           </item>
-          <item row="14" column="0">
+          <item row="24" column="0">
            <layout class="QVBoxLayout" name="verticalLayout_4">
             <property name="spacing">
              <number>0</number>
@@ -986,7 +1426,7 @@
             </property>
            </layout>
           </item>
-          <item row="16" column="1">
+          <item row="25" column="1">
            <layout class="QHBoxLayout" name="horizontalLayout_9" stretch="0,0,1">
             <property name="spacing">
              <number>6</number>
@@ -1380,7 +1820,7 @@
             </item>
            </layout>
           </item>
-          <item row="11" column="0">
+          <item row="21" column="0">
            <widget class="QLabel" name="label_19">
             <property name="sizePolicy">
              <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
@@ -1481,7 +1921,7 @@
             </item>
            </layout>
           </item>
-          <item row="13" column="0">
+          <item row="23" column="0">
            <widget class="QLabel" name="label_8">
             <property name="sizePolicy">
              <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
@@ -1497,7 +1937,7 @@
             </property>
            </widget>
           </item>
-          <item row="19" column="1">
+          <item row="27" column="1">
            <layout class="QHBoxLayout" name="horizontalLayout_11">
             <property name="spacing">
              <number>6</number>
@@ -1592,7 +2032,7 @@
             </item>
            </layout>
           </item>
-          <item row="11" column="1">
+          <item row="21" column="1">
            <layout class="QHBoxLayout" name="horizontalLayout_12" stretch="0,0,0,0">
             <property name="spacing">
              <number>6</number>
@@ -1669,7 +2109,7 @@
             </item>
            </layout>
           </item>
-          <item row="21" column="1">
+          <item row="28" column="1">
            <spacer name="verticalSpacer">
             <property name="orientation">
              <enum>Qt::Vertical</enum>
