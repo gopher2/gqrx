@@ -24,6 +24,8 @@
 
 #include <QDockWidget>
 #include <QTableWidgetItem>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include "qtgui/bookmarkstablemodel.h"
 #include <QItemDelegate>
 
@@ -51,8 +53,10 @@ private:
     qint64             m_currentFrequency;
     bool               m_updating;
     BookmarksTableModel *bookmarksTableModel;
+    QNetworkAccessManager *m_networkManager;
 
     bool eventFilter(QObject* object, QEvent* event);
+    QString mapSatelliteModeToModulation(const QString& mode);
 
 public:
     explicit DockBookmarks(QWidget *parent = 0);
@@ -81,4 +85,6 @@ private slots:
     void ShowContextMenu(const QPoint&pos);
     bool DeleteSelectedBookmark();
     void doubleClicked(const QModelIndex & index);
+    void on_btnUpdateAmsat_clicked();
+    void onAmsatDataReceived(QNetworkReply* reply);
 };
