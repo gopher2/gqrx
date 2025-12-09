@@ -50,6 +50,7 @@
 #include "qtgui/ioconfig.h"
 #include "mainwindow.h"
 #include "qtgui/dxc_options.h"
+#include "qtgui/rrimportdialog.h"
 #include "qtgui/dxc_spots.h"
 
 /* Qt Designer files */
@@ -154,6 +155,7 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     Bookmarks::Get().setConfigDir(m_cfg_dir);
     BandPlan::Get().load();
     uiDockBookmarks = new DockBookmarks(this);
+    uiDockRRImport = new DockRRImport(this);
 
     // setup some toggle view shortcuts
     uiDockInputCtl->toggleViewAction()->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_J));
@@ -200,10 +202,14 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     uiDockAudio->raise();
 
     addDockWidget(Qt::BottomDockWidgetArea, uiDockBookmarks);
+    addDockWidget(Qt::BottomDockWidgetArea, uiDockRRImport);
+    tabifyDockWidget(uiDockBookmarks, uiDockRRImport);
+    uiDockBookmarks->raise();
 
     /* hide docks that we don't want to show initially */
     uiDockBookmarks->hide();
     uiDockRDS->hide();
+    uiDockRRImport->hide();
 
     /* Add dock widget actions to View menu. By doing it this way all signal/slot
        connections will be established automagially.
@@ -214,6 +220,7 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     ui->menu_View->addAction(uiDockAudio->toggleViewAction());
     ui->menu_View->addAction(uiDockFft->toggleViewAction());
     ui->menu_View->addAction(uiDockBookmarks->toggleViewAction());
+    ui->menu_View->addAction(uiDockRRImport->toggleViewAction());
     ui->menu_View->addSeparator();
     ui->menu_View->addAction(ui->mainToolBar->toggleViewAction());
     ui->menu_View->addSeparator();
@@ -313,6 +320,9 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     connect(uiDockBookmarks, SIGNAL(newBookmarkActivated(qint64, QString, int)), this, SLOT(onBookmarkActivated(qint64, QString, int)));
     connect(uiDockBookmarks->actionAddBookmark, SIGNAL(triggered()), this, SLOT(on_actionAddBookmark_triggered()));
     connect(&Bookmarks::Get(), SIGNAL(BookmarksChanged()), ui->plotter, SLOT(updateOverlay()));
+    connect(ui->plotter, SIGNAL(lookupFrequencyRequested(qint64)), uiDockRRImport, SLOT(setFrequencyFilter(qint64)));
+    connect(ui->plotter, &CPlotter::lookupFrequencyRequested, uiDockRRImport, &QDockWidget::show);
+    connect(uiDockRRImport, &DockRRImport::frequenciesImported, uiDockBookmarks, &DockBookmarks::updateBookmarks);
 
     //DXC Spots
     connect(&DXCSpots::Get(), SIGNAL(dxcSpotsUpdated()), this, SLOT(updateClusterSpots()));
@@ -445,6 +455,7 @@ MainWindow::~MainWindow()
     delete uiDockRxOpt;
     delete uiDockAudio;
     delete uiDockBookmarks;
+    delete uiDockRRImport;
     delete uiDockFft;
     delete uiDockInputCtl;
     delete uiDockRDS;
@@ -668,6 +679,7 @@ bool MainWindow::loadConfig(const QString& cfgfile, bool check_crash,
     uiDockFft->readSettings(m_settings);
     uiDockAudio->readSettings(m_settings);
     dxc_options->readSettings(m_settings);
+    uiDockRRImport->readSettings(m_settings);
 
     {
         int64_val = m_settings->value("input/frequency", 14236000).toLongLong(&conv_ok);
@@ -797,6 +809,7 @@ void MainWindow::storeSession()
         remote->saveSettings(m_settings);
         iq_tool->saveSettings(m_settings);
         dxc_options->saveSettings(m_settings);
+        uiDockRRImport->saveSettings(m_settings);
 
         {
             int     flo, fhi;

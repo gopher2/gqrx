@@ -50,6 +50,10 @@ add_source_files(SRCS_LIST
 	plotter.h
 	qtcolorpicker.cpp
 	qtcolorpicker.h
+	radioreference.cpp
+	radioreference.h
+	rrimportdialog.cpp
+	rrimportdialog.h
 )
 
 #######################################################################################################################

@@ -32,6 +32,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QFont>
+#include <QMenu>
 #include <QPainter>
 #include <QtGlobal>
 #include <QToolTip>
@@ -755,8 +756,27 @@ void CPlotter::mousePressEvent(QMouseEvent * event)
             }
             else if (event->buttons() == Qt::RightButton)
             {
-                // reset frequency zoom
-                resetHorizontalZoom();
+                // Show context menu with options
+                qint64 clickFreq = freqFromX(px);
+                QMenu contextMenu(this);
+
+                QAction *resetZoomAction = contextMenu.addAction("Reset Zoom");
+                contextMenu.addSeparator();
+                QAction *lookupAction = contextMenu.addAction(QString("Lookup %1 MHz on RadioReference...")
+                    .arg(clickFreq / 1e6, 0, 'f', 4));
+                QAction *tuneAction = contextMenu.addAction("Tune to this frequency");
+
+                QAction *selected = contextMenu.exec(event->globalPosition().toPoint());
+
+                if (selected == resetZoomAction) {
+                    resetHorizontalZoom();
+                } else if (selected == lookupAction) {
+                    emit lookupFrequencyRequested(clickFreq);
+                } else if (selected == tuneAction) {
+                    m_DemodCenterFreq = roundFreq(clickFreq, m_ClickResolution);
+                    emit newDemodFreq(m_DemodCenterFreq, m_DemodCenterFreq - m_CenterFreq);
+                    updateOverlay();
+                }
             }
         }
     }
