@@ -87,7 +87,12 @@ public:
     void setSpanFreq(quint32 s)
     {
         if (s > 0 && s < INT_MAX) {
-            m_Span = (qint32)s;
+            // Clamp span to sample rate to maintain invariant m_Span <= m_SampleFreq.
+            // During initialization, setSpanFreq() may be called with the actual SDR
+            // rate before setSampleRate() updates m_SampleFreq, causing m_Span to
+            // temporarily exceed m_SampleFreq. This would make setFftCenterFreq()
+            // calculate a negative limit, crashing qBound with "max < min" assertion.
+            m_Span = std::min((qint32)s, (qint32)m_SampleFreq);
             setFftCenterFreq(m_FftCenter);
         }
         updateOverlay();
@@ -114,6 +119,10 @@ public:
 
     void setFftCenterFreq(qint64 f) {
         qint64 limit = ((qint64)m_SampleFreq - m_Span) / 2 - 1;
+        // At full bandwidth (span == sampleFreq), limit is -1 which would crash
+        // qBound. Clamp to 0 to lock FFT center when panning is not possible.
+        if (limit < 0)
+            limit = 0;
         m_FftCenter = qBound(-limit, f, limit);
     }
 
