@@ -497,6 +497,20 @@ bool MainWindow::loadConfig(const QString& cfgfile, bool check_crash,
 
     qDebug() << "Configuration file:" << m_settings->fileName();
 
+    // Warn user early if config file exists but is not writable (e.g., wrong
+    // ownership after running as root). QSettings silently fails to save,
+    // leaving users confused about why settings don't persist.
+    QFileInfo configFileInfo(m_settings->fileName());
+    if (configFileInfo.exists() && !configFileInfo.isWritable())
+    {
+        QMessageBox::warning(this, tr("Configuration File Permission Error"),
+            tr("<p>The configuration file is not writable:</p>"
+               "<p><code>%1</code></p>"
+               "<p>Settings changes will not be saved. "
+               "Please check file ownership and permissions.</p>")
+            .arg(m_settings->fileName()));
+    }
+
     if (check_crash)
     {
         if (m_settings->value("crashed", false).toBool())
