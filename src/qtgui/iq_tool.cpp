@@ -4,6 +4,7 @@
  *           https://gqrx.dk/
  *
  * Copyright 2014 Alexandru Csete OZ9AEC.
+ * Copyright 2025 David Kierzkowski K9DPD
  *
  * Gqrx is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,6 +30,11 @@
 #include <QString>
 #include <QStringList>
 #include <QScrollBar>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QRegularExpression>
 
 #include <math.h>
 
@@ -40,6 +46,7 @@ CIqTool::CIqTool(QWidget *parent) :
     QDialog(parent),
     ui(new Ui::CIqTool)
 {
+
     ui->setupUi(this);
 
     is_recording = false;
@@ -48,6 +55,7 @@ CIqTool::CIqTool(QWidget *parent) :
     sample_rate = 192000;
     rec_len = 0;
     center_freq = 1e8;
+
 
     //ui->recDirEdit->setText(QDir::currentPath());
 
@@ -68,7 +76,6 @@ CIqTool::~CIqTool()
     delete ui;
     delete recdir;
     delete error_palette;
-
 }
 
 /*! \brief Set new sample rate. */
@@ -93,12 +100,13 @@ void CIqTool::on_listWidget_currentTextChanged(const QString &currentText)
     current_file = currentText;
     QFileInfo info(*recdir, current_file);
 
+
     parseFileName(currentText);
     rec_len = (int)(info.size() / (sample_rate * bytes_per_sample));
 
+
     // Get duration of selected recording and update label
     refreshTimeWidgets();
-
 }
 
 /*! \brief Start/stop playback */
@@ -126,10 +134,10 @@ void CIqTool::on_playButton_clicked(bool checked)
         }
         else
         {
+            QString filePath = recdir->absoluteFilePath(current_file);
             ui->listWidget->setEnabled(false);
             ui->recButton->setEnabled(false);
-            emit startPlayback(recdir->absoluteFilePath(current_file),
-                               (float)sample_rate, center_freq);
+            emit startPlayback(filePath, (float)sample_rate, center_freq);
         }
     }
     else
@@ -176,7 +184,8 @@ void CIqTool::on_recButton_clicked(bool checked)
         emit startRecording(recdir->path(), ui->formatCombo->currentText());
 
         refreshDir();
-        ui->listWidget->setCurrentRow(ui->listWidget->count()-1);
+        int rowCount = ui->listWidget->count();
+        ui->listWidget->setCurrentRow(rowCount-1);
     }
     else
     {
@@ -208,9 +217,13 @@ void CIqTool::startIqRecorder(void)
 void CIqTool::stopIqRecorder(void)
 {
     if (ui->recButton->isChecked())
+    {
         ui->recButton->click(); // emulate a button click
+    }
     else
+    {
         qDebug() << __func__ << "No IQ recording in progress";
+    }
 }
 
 /*! \brief Cancel a recording.
@@ -254,26 +267,38 @@ void CIqTool::showEvent(QShowEvent * event)
 void CIqTool::saveSettings(QSettings *settings)
 {
     if (!settings)
+    {
         return;
+    }
 
     // Location of baseband recordings
     QString dir = recdir->path();
     if (dir != QDir::homePath())
+    {
         settings->setValue("baseband/rec_dir", dir);
+    }
     else
+    {
         settings->remove("baseband/rec_dir");
+    }
 
     QString format = ui->formatCombo->currentText();
     if (format != "Raw")
+    {
         settings->setValue("baseband/rec_format", format);
+    }
     else
+    {
         settings->remove("baseband/rec_format");
+    }
 }
 
 void CIqTool::readSettings(QSettings *settings)
 {
     if (!settings)
+    {
         return;
+    }
 
     // Location of baseband recordings
     QString dir = settings->value("baseband/rec_dir", QDir::homePath()).toString();
@@ -312,7 +337,9 @@ void CIqTool::on_recDirButton_clicked()
                                                     QFileDialog::DontResolveSymlinks);
 
     if (!dir.isNull())
+    {
         ui->recDirEdit->setText(dir);
+    }
 }
 
 void CIqTool::timeoutFunction(void)
@@ -323,7 +350,8 @@ void CIqTool::timeoutFunction(void)
     {
         // advance slider with one second
         int val = ui->slider->value();
-        if (val < ui->slider->maximum())
+        int max = ui->slider->maximum();
+        if (val < max)
         {
             ui->slider->blockSignals(true);
             ui->slider->setValue(val+1);
@@ -332,7 +360,9 @@ void CIqTool::timeoutFunction(void)
         }
     }
     if (is_recording)
+    {
         refreshTimeWidgets();
+    }
 }
 
 /*! \brief Refresh list of files in current working directory. */
@@ -342,8 +372,10 @@ void CIqTool::refreshDir()
     QScrollBar * sc = ui->listWidget->verticalScrollBar();
     int lastScroll = sc->sliderPosition();
 
+
     recdir->refresh();
     QStringList files = recdir->entryList();
+
 
     ui->listWidget->blockSignals(true);
     ui->listWidget->clear();
@@ -351,6 +383,7 @@ void CIqTool::refreshDir()
     ui->listWidget->setCurrentRow(selection);
     sc->setSliderPosition(lastScroll);
     ui->listWidget->blockSignals(false);
+
 
     if (is_recording)
     {
@@ -385,35 +418,117 @@ void CIqTool::refreshTimeWidgets(void)
     pm = pos / 60;
     ps = pos % 60;
 
-    ui->timeLabel->setText(QString("%1:%2:%3 / %4:%5:%6")
+    QString timeText = QString("%1:%2:%3 / %4:%5:%6")
                            .arg(ph, 2, 10, QChar('0'))
                            .arg(pm, 2, 10, QChar('0'))
                            .arg(ps, 2, 10, QChar('0'))
                            .arg(lh, 2, 10, QChar('0'))
                            .arg(lm, 2, 10, QChar('0'))
-                           .arg(ls, 2, 10, QChar('0')));
+                           .arg(ls, 2, 10, QChar('0'));
+
+
+    ui->timeLabel->setText(timeText);
 }
 
 
-/*! \brief Extract sample rate and offset frequency from file name */
+/*! \brief Extract sample rate and center frequency from file.
+ *
+ * For SigMF files (.sigmf-data), reads from the .sigmf-meta JSON sidecar.
+ * For legacy files, parses from filename: gqrx_yymmdd_hhmmss_freq_samprate_fc.raw
+ * For new format files, tries to parse freq from filename pattern like "145.5MHz"
+ */
 void CIqTool::parseFileName(const QString &filename)
 {
-    bool   sr_ok;
-    qint64 sr;
-    bool   center_ok;
-    qint64 center;
 
+    // Check for SigMF metadata file
+    if (filename.endsWith(".sigmf-data", Qt::CaseInsensitive))
+    {
+        QString metaPath = recdir->absoluteFilePath(filename);
+        metaPath.replace(".sigmf-data", ".sigmf-meta", Qt::CaseInsensitive);
+
+        QFile metaFile(metaPath);
+        if (metaFile.open(QIODevice::ReadOnly))
+        {
+            QJsonDocument doc = QJsonDocument::fromJson(metaFile.readAll());
+            metaFile.close();
+
+            if (!doc.isNull() && doc.isObject())
+            {
+                QJsonObject root = doc.object();
+
+                // Read sample rate from global
+                if (root.contains("global"))
+                {
+                    QJsonObject global = root["global"].toObject();
+                    if (global.contains("core:sample_rate"))
+                    {
+                        sample_rate = static_cast<qint64>(global["core:sample_rate"].toDouble());
+                    }
+                }
+
+                // Read center frequency from captures
+                if (root.contains("captures"))
+                {
+                    QJsonArray captures = root["captures"].toArray();
+                    if (!captures.isEmpty())
+                    {
+                        QJsonObject capture = captures[0].toObject();
+                        if (capture.contains("core:frequency"))
+                        {
+                            center_freq = static_cast<qint64>(capture["core:frequency"].toDouble());
+                        }
+                    }
+                }
+                return;  // Successfully read metadata
+            }
+        }
+    }
+
+    // Try new format: look for frequency pattern like "145.5MHz" or "1234567Hz"
+    QRegularExpression freqMhzPattern("([0-9.]+)MHz", QRegularExpression::CaseInsensitiveOption);
+    QRegularExpression freqHzPattern("_([0-9]+)Hz", QRegularExpression::CaseInsensitiveOption);
+
+    QRegularExpressionMatch match = freqMhzPattern.match(filename);
+    if (match.hasMatch())
+    {
+        bool ok;
+        double freqMhz = match.captured(1).toDouble(&ok);
+        if (ok)
+        {
+            center_freq = static_cast<qint64>(freqMhz * 1e6);
+        }
+    }
+    else
+    {
+        match = freqHzPattern.match(filename);
+        if (match.hasMatch())
+        {
+            bool ok;
+            center_freq = match.captured(1).toLongLong(&ok);
+            if (ok)
+            {
+            }
+        }
+    }
+
+    // Legacy format: gqrx_yymmdd_hhmmss_freq_samprate_fc.raw
     QStringList list = filename.split('_');
+    if (list.size() >= 5)
+    {
+        bool sr_ok, center_ok;
+        qint64 sr = list.at(4).toLongLong(&sr_ok);
+        qint64 center = list.at(3).toLongLong(&center_ok);
 
-    if (list.size() < 5)
-        return;
 
-    // gqrx_yymmdd_hhmmss_freq_samprate_fc.raw
-    sr = list.at(4).toLongLong(&sr_ok);
-    center = list.at(3).toLongLong(&center_ok);
+        if (sr_ok)
+        {
+            sample_rate = sr;
+        }
 
-    if (sr_ok)
-        sample_rate = sr;
-    if (center_ok)
-        center_freq = center;
+        if (center_ok && center > 1000)  // Sanity check - should be Hz not MHz
+        {
+            center_freq = center;
+        }
+    }
+
 }

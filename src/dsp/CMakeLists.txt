@@ -49,4 +49,8 @@ add_source_files(SRCS_LIST
 	sniffer_f.h
 	stereo_demod.cpp
 	stereo_demod.h
+	iq_recorder.cpp
+	iq_recorder.h
+	audio_recorder.cpp
+	audio_recorder.h
 )

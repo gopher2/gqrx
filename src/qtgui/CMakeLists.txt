@@ -44,12 +44,20 @@ add_source_files(SRCS_LIST
 	iq_tool.h
 	meter.cpp
 	meter.h
+	multi_tuner_plotter.cpp
+	multi_tuner_plotter.h
 	nb_options.cpp
 	nb_options.h
 	plotter.cpp
 	plotter.h
 	qtcolorpicker.cpp
 	qtcolorpicker.h
+	recording_options.cpp
+	recording_options.h
+	tuner_list.cpp
+	tuner_list.h
+	tuner_panel.cpp
+	tuner_panel.h
 )
 
 #######################################################################################################################
@@ -69,4 +77,5 @@ add_source_files(UI_SRCS_LIST
 	ioconfig.ui
 	iq_tool.ui
 	nb_options.ui
+	recording_options.ui
 )

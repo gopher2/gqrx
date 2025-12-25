@@ -5,6 +5,7 @@
  *
  * Copyright 2012 Alexandru Csete OZ9AEC.
  * FM stereo implementation by Alex Grinkov a.grinkov(at)gmail.com.
+ * Copyright 2025 David Kierzkowski K9DPD
  *
  * Gqrx is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,7 +23,6 @@
  * Boston, MA 02110-1301, USA.
  */
 #include <cmath>
-#include <iostream>
 #include <QDebug>
 #include "receivers/wfmrx.h"
 
@@ -40,12 +40,22 @@ wfmrx::wfmrx(float quad_rate, float audio_rate)
       d_audio_rate(audio_rate),
       d_demod(WFMRX_DEMOD_MONO)
 {
-    iq_resamp = make_resampler_cc(PREF_QUAD_RATE/d_quad_rate);
+
+    float resamp_rate = PREF_QUAD_RATE/d_quad_rate;
+    iq_resamp = make_resampler_cc(resamp_rate);
 
     filter = make_rx_filter((double)PREF_QUAD_RATE, -80000.0, 80000.0, 20000.0);
+
     sql = gr::analog::simple_squelch_cc::make(-150.0, 0.001);
+
     meter = make_rx_meter_c((double)PREF_QUAD_RATE);
+
     demod_fm = make_rx_demod_fm(PREF_QUAD_RATE, 75000.0, 0.0);
+
+    // Audio gain boost to match NFM output levels
+    // WFM has ~6x lower output due to higher max_dev (75kHz vs 5kHz)
+    audio_gain = gr::blocks::multiply_const_ff::make(6.0f);
+
     stereo = make_stereo_demod(PREF_QUAD_RATE, d_audio_rate, true);
     stereo_oirt = make_stereo_demod(PREF_QUAD_RATE, d_audio_rate, true, true);
     mono = make_stereo_demod(PREF_QUAD_RATE, d_audio_rate, false);
@@ -61,15 +71,17 @@ wfmrx::wfmrx(float quad_rate, float audio_rate)
     connect(iq_resamp, 0, filter, 0);
     connect(filter, 0, meter, 0);
     connect(filter, 0, sql, 0);
+    connect(filter, 0, self(), 2);  // IQ tap output at 240 kHz (output port 2)
     connect(sql, 0, demod_fm, 0);
-    connect(demod_fm, 0, mono, 0);
+    connect(demod_fm, 0, audio_gain, 0);  // Add gain boost
+    connect(audio_gain, 0, mono, 0);       // Then to stereo/mono demod
     connect(mono, 0, self(), 0); // left  channel
     connect(mono, 1, self(), 1); // right channel
+
 }
 
 wfmrx::~wfmrx()
 {
-
 }
 
 bool wfmrx::start()
@@ -92,8 +104,9 @@ void wfmrx::set_quad_rate(float quad_rate)
     {
         qDebug() << "Changing WFM RX quad rate:"  << d_quad_rate << "->" << quad_rate;
         d_quad_rate = quad_rate;
+        float new_resamp_rate = PREF_QUAD_RATE/d_quad_rate;
         lock();
-        iq_resamp->set_rate(PREF_QUAD_RATE/d_quad_rate);
+        iq_resamp->set_rate(new_resamp_rate);
         unlock();
     }
 }
@@ -170,9 +183,12 @@ void nbrx::set_agc_manual_gain(int gain)
 
 void wfmrx::set_demod(int demod)
 {
+
     /* check if new demodulator selection is valid */
     if ((demod < WFMRX_DEMOD_MONO) || (demod >= WFMRX_DEMOD_NUM))
+    {
         return;
+    }
 
     if (demod == d_demod) {
         /* nothing to do */
@@ -182,24 +198,24 @@ void wfmrx::set_demod(int demod)
     /* lock graph while we reconfigure */
     lock();
 
-    /* disconnect current demodulator */
+    /* disconnect current demodulator (audio_gain is always between demod_fm and stereo/mono) */
     switch (d_demod) {
 
     case WFMRX_DEMOD_MONO:
     default:
-        disconnect(demod_fm, 0, mono, 0);
+        disconnect(audio_gain, 0, mono, 0);
         disconnect(mono, 0, self(), 0); // left  channel
         disconnect(mono, 1, self(), 1); // right channel
         break;
 
     case WFMRX_DEMOD_STEREO:
-        disconnect(demod_fm, 0, stereo, 0);
+        disconnect(audio_gain, 0, stereo, 0);
         disconnect(stereo, 0, self(), 0); // left  channel
         disconnect(stereo, 1, self(), 1); // right channel
         break;
 
     case WFMRX_DEMOD_STEREO_UKW:
-        disconnect(demod_fm, 0, stereo_oirt, 0);
+        disconnect(audio_gain, 0, stereo_oirt, 0);
         disconnect(stereo_oirt, 0, self(), 0); // left  channel
         disconnect(stereo_oirt, 1, self(), 1); // right channel
         break;
@@ -209,19 +225,19 @@ void wfmrx::set_demod(int demod)
 
     case WFMRX_DEMOD_MONO:
     default:
-        connect(demod_fm, 0, mono, 0);
+        connect(audio_gain, 0, mono, 0);
         connect(mono, 0, self(), 0); // left  channel
         connect(mono, 1, self(), 1); // right channel
         break;
 
     case WFMRX_DEMOD_STEREO:
-        connect(demod_fm, 0, stereo, 0);
+        connect(audio_gain, 0, stereo, 0);
         connect(stereo, 0, self(), 0); // left  channel
         connect(stereo, 1, self(), 1); // right channel
         break;
 
     case WFMRX_DEMOD_STEREO_UKW:
-        connect(demod_fm, 0, stereo_oirt, 0);
+        connect(audio_gain, 0, stereo_oirt, 0);
         connect(stereo_oirt, 0, self(), 0); // left  channel
         connect(stereo_oirt, 1, self(), 1); // right channel
         break;

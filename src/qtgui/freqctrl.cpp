@@ -5,6 +5,7 @@
  *
  * Copyright 2010 Moe Wheatley AE4JY
  * Copyright 2012-2017 Alexandru Csete OZ9AEC
+ * Copyright 2025 David Kierzkowski K9DPD
  * All rights reserved.
  *
  * This software is released under the "Simplified BSD License".
@@ -31,16 +32,18 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-#include <QDebug>
 #include "freqctrl.h"
 
 // Manual adjustment of Font size as percent of control height
 #define DIGIT_SIZE_PERCENT 90
 #define UNITS_SIZE_PERCENT 60
 
-// adjustment for separation between digits
-#define SEPRATIO_N 100         // separation rectangle size ratio numerator times 100
+// adjustment for separation between digit groups (every 3 digits)
+#define SEPRATIO_N 180         // separation rectangle size ratio numerator times 100 (larger = wider gap)
 #define SEPRATIO_D 3           // separation rectangle size ratio denominator
+
+// gap between individual digits (in pixels on each side)
+#define DIGIT_GAP 2
 
 #define STATUS_TIP \
     "Scroll or left-click to increase/decrease digit. " \
@@ -519,6 +522,9 @@ void CFreqCtrl::drawBkGround(QPainter &Painter)
 {
     QRect    rect(0, 0, width(), height());
 
+    // Fill entire background with darker color so gaps between digits are visible
+    Painter.fillRect(rect, m_BkColor.darker(140));
+
     // qDebug() <<rect;
     int    cellwidth = 100 * rect.width() /
                        (100 * (m_NumDigits + m_NumDigitsForUnit) +
@@ -556,7 +562,7 @@ void CFreqCtrl::drawBkGround(QPainter &Painter)
                                    rect.top(),
                                    digpos,
                                    rect.bottom());
-            Painter.fillRect(m_SepRect[i], m_BkColor);
+            // Leave separator unfilled to show darker gap between digit groups
             digpos -= sepwidth;
             if (m_Unit == FCTL_UNIT_NONE)
             {
@@ -595,10 +601,13 @@ void CFreqCtrl::drawDigits(QPainter &Painter)
         if (m_DigitInfo[i].incval == 0)
             m_FirstEditableDigit++;
 
+        // Shrink rect slightly to create small gaps between digits
+        QRect digitBgRect = m_DigitInfo[i].dQRect.adjusted(DIGIT_GAP, 0, -DIGIT_GAP, 0);
+
         if (i == m_ActiveEditDigit && m_DigitInfo[i].incval != 0)
-            Painter.fillRect(m_DigitInfo[i].dQRect, m_HighlightColor);
+            Painter.fillRect(digitBgRect, m_HighlightColor);
         else
-            Painter.fillRect(m_DigitInfo[i].dQRect, m_BkColor);
+            Painter.fillRect(digitBgRect, m_BkColor);
 
         if (i >= m_LeadZeroPos)
             Painter.setPen(m_InactiveColor);

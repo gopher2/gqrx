@@ -2,6 +2,7 @@
 /* + + +   This Software is released under the "Simplified BSD License"  + + +
  * Copyright 2010 Moe Wheatley. All rights reserved.
  * Copyright 2011-2013 Alexandru Csete OZ9AEC
+ * Copyright 2025 David Kierzkowski K9DPD
  *
  * Redistribution and use in source and binary forms, with or without modification, are
  * permitted provided that the following conditions are met:
@@ -85,6 +86,7 @@ static inline bool out_of_range(float min, float max)
 
 CPlotter::CPlotter(QWidget *parent) : QFrame(parent)
 {
+
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setFocusPolicy(Qt::StrongFocus);
     setAttribute(Qt::WA_PaintOnScreen,false);
@@ -591,6 +593,7 @@ void CPlotter::setWaterfallSpan(quint64 span_ms)
         wf_epoch = tnow;
         wf_count = 0;
         msec_per_wfline = (double)wf_span / (qreal)m_WaterfallImage.height();
+
     }
     wf_valid_since_ms = tnow;
     clearWaterfallBuf();
@@ -822,6 +825,8 @@ void CPlotter::mouseReleaseEvent(QMouseEvent * event)
 // Make a single zoom step on the X axis.
 void CPlotter::zoomStepX(float step, int x)
 {
+
+
     // Limit zoom out to 1.0 and zoom in to where there are 5 fft points on the
     // screen. m_fftDataSize is initialized to 0 ... if the app hasn't started
     // yet, allow any zoom level.
@@ -830,7 +835,9 @@ void CPlotter::zoomStepX(float step, int x)
         double currentZoom = (double)m_SampleFreq / (double)m_Span;
         if ((step >= 1.0f && currentZoom <= 1.0)
             || (step < 1.0f && currentZoom >= (double)m_fftDataSize / 4))
+        {
             return;
+        }
     }
 
     // calculate new range shown on FFT
@@ -870,7 +877,8 @@ void CPlotter::zoomStepX(float step, int x)
     // setFftCenterFreq() and updateOverlay() internally. Span needs to be set
     // before frequency limits can be checked in setFftCenterFreq().
     m_Span = new_span;
-    setFftCenterFreq(qRound64((f_max + f_min) / 2.0f));
+    qint64 new_fft_center = qRound64((f_max + f_min) / 2.0f);
+    setFftCenterFreq(new_fft_center);
 
     m_MaxHoldValid = false;
     m_MinHoldValid = false;
@@ -1126,6 +1134,24 @@ void CPlotter::draw(bool newData)
     qint32        i, j;
     float         histMax;
     QFontMetricsF metrics(m_Font);
+
+    // Static variables to track changes - only log when values actually change
+    static qint64 last_CenterFreq = 0;
+    static qint64 last_DemodCenterFreq = 0;
+    static qint32 last_Span = 0;
+    static float last_SampleFreq = 0;
+    static qint64 last_FftCenter = 0;
+
+    if (last_CenterFreq != m_CenterFreq || last_DemodCenterFreq != m_DemodCenterFreq ||
+        last_Span != m_Span || last_SampleFreq != m_SampleFreq || last_FftCenter != m_FftCenter)
+    {
+
+        last_CenterFreq = m_CenterFreq;
+        last_DemodCenterFreq = m_DemodCenterFreq;
+        last_Span = m_Span;
+        last_SampleFreq = m_SampleFreq;
+        last_FftCenter = m_FftCenter;
+    }
 
     // No fft data yet? Draw overlay if needed and return.
     if (m_fftDataSize == 0)
@@ -1541,6 +1567,7 @@ void CPlotter::draw(bool newData)
         const float binSizeY = (float)plotHeight / (float)histBinsDisplayed;
         QPolygonF abPolygon;
         qreal yFillMax = 0;
+
         for (i = 0; i < npts; i++)
         {
             const int ix = i + xmin;
@@ -1713,7 +1740,7 @@ void CPlotter::draw(bool newData)
                     {
                         const qreal y = (qreal)std::max(std::min(
                             panddBGainFactor * (m_PandMaxdB - 10.0f * log10f(vi)),
-                            (float)plotHeight - 0.0f), 0.0f);
+                            (float)plotHeight), 0.0f);
                         m_Peaks[ix] = y;
                     }
                 }
@@ -1737,7 +1764,7 @@ void CPlotter::draw(bool newData)
                     {
                         const qreal y = (qreal)std::max(std::min(
                             panddBGainFactor * (m_PandMaxdB - 10.0f * log10f(vi)),
-                            (float)plotHeight - 0.0f), 0.0f);
+                            (float)plotHeight), 0.0f);
 
                         // Show the wider peak only if there is no very close narrow peak
                         bool found = false;
@@ -1805,6 +1832,7 @@ void CPlotter::draw(bool newData)
 
 void CPlotter::setRunningState(bool running)
 {
+
     // Reset waterfall time and clear waterfall, since time is no longer correct
     if (running && !m_Running)
     {
@@ -1837,6 +1865,8 @@ void CPlotter::setNewFftData(const float *fftData, int size)
 
     if (size != m_fftDataSize)
     {
+
+
         // Reallocate and invalidate IIRs
         m_fftData.resize(size);
         m_fftIIR.resize(size);
@@ -1854,8 +1884,11 @@ void CPlotter::setNewFftData(const float *fftData, int size)
         // Zoom out if needed to keep about 4 points on the screen
         double currentZoom = (double)m_SampleFreq / (double)m_Span;
         double maxZoom = (double)m_fftDataSize / 4.0;
+
         if (currentZoom > maxZoom)
+        {
             zoomStepX(currentZoom / maxZoom, qRound((qreal)m_Size.width() * m_DPR / 2.0));
+        }
     }
 
     // For dBFS, define full scale as peak (not RMS). A 1.0 FS peak sine wave
@@ -1926,8 +1959,12 @@ void CPlotter::setFftRange(float min, float max)
 
 void CPlotter::setPandapterRange(float min, float max)
 {
+
+
     if (out_of_range(min, max))
+    {
         return;
+    }
 
     m_PandMindB = min;
     m_PandMaxdB = max;
@@ -1937,8 +1974,12 @@ void CPlotter::setPandapterRange(float min, float max)
 
 void CPlotter::setWaterfallRange(float min, float max)
 {
+
+
     if (out_of_range(min, max))
+    {
         return;
+    }
 
     m_WfMindB = min;
     m_WfMaxdB = max;
@@ -2055,6 +2096,10 @@ void CPlotter::drawOverlay()
                              fontHeight, Qt::AlignVCenter | Qt::AlignHCenter,
                              tag.name);
         }
+    }
+    else
+    {
+        m_Taglist.clear();
     }
 
     if (m_BandPlanEnabled)
@@ -2214,7 +2259,7 @@ void CPlotter::drawOverlay()
         }
     }
 
-    // Draw demod filter box
+    // Draw demod filter box (below any overlapping bookmark tags)
     if (m_FilterBoxEnabled)
     {
         m_DemodFreqX = xFromFreq(m_DemodCenterFreq);
@@ -2223,11 +2268,16 @@ void CPlotter::drawOverlay()
 
         int dw = m_DemodHiCutFreqX - m_DemodLowCutFreqX;
 
-        painter.fillRect(m_DemodLowCutFreqX, 0, dw, h,
+        // Find bookmark bottom at filter box position (0 if no overlapping bookmarks)
+        int yTop = getBookmarkTagsBottomAtX(m_DemodLowCutFreqX, m_DemodHiCutFreqX);
+
+        painter.fillRect(m_DemodLowCutFreqX, yTop, dw, h - yTop,
                          QColor::fromRgba(PLOTTER_FILTER_BOX_COLOR));
 
+        // Center line also starts below any bookmark at that x position
+        int lineYTop = getBookmarkTagsBottomAtX(m_DemodFreqX - 1, m_DemodFreqX + 1);
         painter.setPen(QPen(QColor::fromRgba(PLOTTER_FILTER_LINE_COLOR), m_DPR));
-        painter.drawLine(m_DemodFreqX, 0, m_DemodFreqX, h);
+        painter.drawLine(m_DemodFreqX, lineYTop, m_DemodFreqX, h);
     }
 
     // Draw a black line at the bottom of the plotter to separate it from the
@@ -2292,7 +2342,7 @@ void CPlotter::makeFrequencyStrs()
 }
 
 // Convert from frequency to screen coordinate
-int CPlotter::xFromFreq(qint64 freq)
+int CPlotter::xFromFreq(qint64 freq) const
 {
     qreal w = m_Size.width() * m_DPR;
     double startFreq = (double)m_CenterFreq
@@ -2303,7 +2353,7 @@ int CPlotter::xFromFreq(qint64 freq)
 }
 
 // Convert from screen coordinate to frequency
-qint64 CPlotter::freqFromX(int x)
+qint64 CPlotter::freqFromX(int x) const
 {
     double ratio = 0;
     if ((m_Size.width() > 0) && (m_DPR > 0))
@@ -2312,6 +2362,30 @@ qint64 CPlotter::freqFromX(int x)
     qint64 f = qRound64((double)m_CenterFreq + (double)m_FftCenter
                         - (double)m_Span / 2.0 + ratio * (double)m_Span);
     return f;
+}
+
+// Find the bottom of bookmark tags that overlap with the given x range
+// Input coordinates are in LOGICAL pixels (widget coordinates)
+// m_Taglist stores DPR-scaled coordinates, so we convert
+// Returns 0 if no bookmarks overlap
+int CPlotter::getBookmarkTagsBottomAtX(int xLeft, int xRight) const
+{
+    // Convert logical pixel coordinates to DPR-scaled coordinates for comparison
+    qreal dpr = m_DPR > 0 ? m_DPR : 1.0;
+    qreal scaledLeft = xLeft * dpr;
+    qreal scaledRight = xRight * dpr;
+
+    int maxBottom = 0;
+    for (const auto& tagPair : m_Taglist) {
+        const QRectF& rect = tagPair.first;
+        // Check if this tag overlaps with the x range (both in DPR-scaled coords)
+        if (rect.right() >= scaledLeft && rect.left() <= scaledRight) {
+            // Convert tag bottom from DPR-scaled back to logical pixels
+            int tagBottom = qRound((rect.bottom() + 5) / dpr);  // +5 for slant
+            maxBottom = std::max(maxBottom, tagBottom);
+        }
+    }
+    return maxBottom;
 }
 
 /** Calculate time offset of a given line on the waterfall */
@@ -2360,6 +2434,7 @@ void CPlotter::setDemodRanges(int FLowCmin, int FLowCmax,
                               int FHiCmin, int FHiCmax,
                               bool symetric)
 {
+
     m_FLowCmin=FLowCmin;
     m_FLowCmax=FLowCmax;
     m_FHiCmin=FHiCmin;
@@ -2371,13 +2446,17 @@ void CPlotter::setDemodRanges(int FLowCmin, int FLowCmax,
 
 void CPlotter::setCenterFreq(quint64 f)
 {
+
     if((quint64)m_CenterFreq == f)
+    {
         return;
+    }
 
     qint64 offset = m_CenterFreq - m_DemodCenterFreq;
 
     m_CenterFreq = f;
     m_DemodCenterFreq = m_CenterFreq - offset;
+
 
     m_MaxHoldValid = false;
     m_MinHoldValid = false;
@@ -2419,7 +2498,9 @@ void CPlotter::moveToCenterFreq()
 /** Center FFT plot around the demodulator frequency. */
 void CPlotter::moveToDemodFreq()
 {
-    setFftCenterFreq(m_DemodCenterFreq-m_CenterFreq);
+    qint64 new_center = m_DemodCenterFreq - m_CenterFreq;
+
+    setFftCenterFreq(new_center);
     m_MaxHoldValid = false;
     m_MinHoldValid = false;
     m_histIIRValid = false;

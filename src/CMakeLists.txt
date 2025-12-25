@@ -1,6 +1,7 @@
 ###############################################################################
 # Add the source subdirectories
 add_subdirectory(applications)
+add_subdirectory(backends)
 add_subdirectory(dsp)
 add_subdirectory(interfaces)
 add_subdirectory(qtgui)

@@ -4,6 +4,7 @@
  *           https://gqrx.dk/
  *
  * Copyright 2011-2014 Alexandru Csete OZ9AEC.
+ * Copyright 2025 David Kierzkowski K9DPD
  *
  * Gqrx is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -130,6 +131,10 @@ public:
         return d_input_rate / (double)d_decim;
     }
 
+    /** Get the IQ swap block output for multi-tuner integration.
+     *  This provides the IQ-corrected signal after DC removal and IQ swap. */
+    gr::basic_block_sptr get_iq_source(void) const { return iq_swap; }
+
     double      set_analog_bandwidth(double bw);
     double      get_analog_bandwidth(void) const;
 
@@ -217,7 +222,6 @@ public:
     void        get_sniffer_data(float * outbuff, unsigned int &num);
 
     bool        is_recording_audio(void) const { return d_recording_wav; }
-    bool        is_snifffer_active(void) const { return d_sniffer_active; }
 
     /* rds functions */
     void        get_rds_data(std::string &outbuff, int &num);

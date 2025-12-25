@@ -4,6 +4,7 @@
  *           https://gqrx.dk/
  *
  * Copyright 2011-2013 Alexandru Csete OZ9AEC.
+ * Copyright 2025 David Kierzkowski K9DPD
  *
  * Gqrx is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,6 +27,8 @@
 #include <iostream>
 #include "dockrxopt.h"
 #include "ui_dockrxopt.h"
+#include "applications/gqrx/tuner_manager.h"
+#include "applications/gqrx/receiver_channel.h"
 
 
 QStringList DockRxOpt::ModulationStrings;
@@ -67,8 +70,12 @@ DockRxOpt::DockRxOpt(qint64 filterOffsetRange, QWidget *parent) :
     QDockWidget(parent),
     ui(new Ui::DockRxOpt),
     agc_is_on(true),
-    hw_freq_hz(144500000)
+    hw_freq_hz(144500000),
+    d_tuner_manager(nullptr),
+    d_tuner_id(-1),
+    d_updating_from_tuner(false)
 {
+
     ui->setupUi(this);
 
     if (ModulationStrings.size() == 0)
@@ -88,10 +95,6 @@ DockRxOpt::DockRxOpt(qint64 filterOffsetRange, QWidget *parent) :
         ModulationStrings.append("WFM (oirt)");
     }
     ui->modeSelector->addItems(ModulationStrings);
-
-    ui->filterFreq->setup(7, -filterOffsetRange/2, filterOffsetRange/2, 1,
-                          FCTL_UNIT_KHZ);
-    ui->filterFreq->setFrequency(0);
 
     // use same slot for filteCombo and filterShapeCombo
     connect(ui->filterShapeCombo, SIGNAL(activated(int)), this, SLOT(on_filterCombo_activated(int)));
@@ -176,7 +179,8 @@ DockRxOpt::~DockRxOpt()
  */
 void DockRxOpt::setFilterOffset(qint64 freq_hz)
 {
-    ui->filterFreq->setFrequency(freq_hz);
+    // Filter offset display removed - shown in tuner list instead
+    Q_UNUSED(freq_hz);
 }
 
 /**
@@ -185,24 +189,8 @@ void DockRxOpt::setFilterOffset(qint64 freq_hz)
  */
 void DockRxOpt::setFilterOffsetRange(qint64 range_hz)
 {
-    int num_digits;
-
-    if (range_hz <= 0)
-        return;
-
-    range_hz /= 2;
-    if (range_hz < 100e3)
-        num_digits = 5;
-    else if (range_hz < 1e6)
-        num_digits = 6;
-    else if (range_hz < 1e7)
-        num_digits = 7;
-    else if (range_hz < 1e8)
-        num_digits = 8;
-    else
-        num_digits = 9;
-
-    ui->filterFreq->setup(num_digits, -range_hz, range_hz, 1, FCTL_UNIT_KHZ);
+    // Filter offset display removed - shown in tuner list instead
+    Q_UNUSED(range_hz);
 }
 
 /**
@@ -215,15 +203,14 @@ void DockRxOpt::setFilterOffsetRange(qint64 range_hz)
  */
 void DockRxOpt::setHwFreq(qint64 freq_hz)
 {
+    // Hardware freq display removed - shown above FFT instead
     hw_freq_hz = freq_hz;
-    updateHwFreq();
 }
 
 /** Update RX frequency label. */
 void DockRxOpt::updateHwFreq()
 {
-    double hw_freq_mhz = hw_freq_hz / 1.0e6;
-    ui->hwFreq->setText(QString("%1 MHz").arg(hw_freq_mhz, 11, 'f', 6, ' '));
+    // Hardware freq display removed - shown above FFT instead
 }
 
 /**
@@ -241,13 +228,19 @@ unsigned int DockRxOpt::filterIdxFromLoHi(int lo, int hi) const
 
     if (lo == filter_preset_table[mode_index][FILTER_PRESET_WIDE][0] &&
         hi == filter_preset_table[mode_index][FILTER_PRESET_WIDE][1])
+    {
         return FILTER_PRESET_WIDE;
+    }
     else if (lo == filter_preset_table[mode_index][FILTER_PRESET_NORMAL][0] &&
              hi == filter_preset_table[mode_index][FILTER_PRESET_NORMAL][1])
+    {
         return FILTER_PRESET_NORMAL;
+    }
     else if (lo == filter_preset_table[mode_index][FILTER_PRESET_NARROW][0] &&
              hi == filter_preset_table[mode_index][FILTER_PRESET_NARROW][1])
+    {
         return FILTER_PRESET_NARROW;
+    }
 
     return FILTER_PRESET_USER;
 }
@@ -267,10 +260,14 @@ void DockRxOpt::setFilterParam(int lo, int hi)
     ui->filterCombo->setCurrentIndex(filter_index);
     if (filter_index == FILTER_PRESET_USER)
     {
-        float width_f;
-        width_f = fabs((hi-lo)/1000.f);
-        ui->filterCombo->setItemText(FILTER_PRESET_USER, QString("User (%1 k)")
-                                     .arg((double)width_f));
+        int width = abs(hi - lo);
+        QString width_str;
+        if (width >= 1000) {
+            width_str = QString("Custom %1 kHz").arg(width / 1000.0, 0, 'f', 1);
+        } else {
+            width_str = QString("Custom %1 Hz").arg(width);
+        }
+        ui->filterCombo->setItemText(FILTER_PRESET_USER, width_str);
     }
 }
 
@@ -325,7 +322,7 @@ int  DockRxOpt::currentDemod() const
     return ui->modeSelector->currentIndex();
 }
 
-QString DockRxOpt::currentDemodAsString()
+QString DockRxOpt::currentDemodAsString() const
 {
     return GetStringForModulationIndex(currentDemod());
 }
@@ -472,15 +469,27 @@ void DockRxOpt::readSettings(QSettings *settings)
 
     int_val = MODE_AM;
     if (settings->contains("receiver/demod")) {
-        if (settings->value("configversion").toInt(&conv_ok) >= 3) {
-            int_val = GetEnumForModulationString(settings->value("receiver/demod").toString());
+        // Try to read as string first (modern format, configversion >= 3)
+        QString demodStr = settings->value("receiver/demod").toString();
+
+        // Check if it's a valid modulation string (not just a number converted to string)
+        if (IsModulationValid(demodStr)) {
+            int_val = GetEnumForModulationString(demodStr);
         } else {
-            int_val = old2new[settings->value("receiver/demod").toInt(&conv_ok)];
+            // Fall back to old integer format (configversion < 3)
+            int oldVal = settings->value("receiver/demod").toInt(&conv_ok);
+            if (conv_ok && oldVal >= 0 && oldVal < 12) {
+                int_val = old2new[oldVal];
+            } else {
+                int_val = MODE_AM;
+            }
         }
     }
 
+    // Only update the UI, don't emit demodSelected - channels have their own saved modes
+    // The dock's demod is just for display/new channels, not for overwriting existing channel modes
     setCurrentDemod(int_val);
-    emit demodSelected(int_val);
+    // NOTE: Removed emit demodSelected(int_val) to prevent overwriting per-channel modes
 
 }
 
@@ -511,11 +520,8 @@ void DockRxOpt::saveSettings(QSettings *settings)
     else
         settings->setValue("receiver/fm_deemph", int_val);
 
-    qint64 offs = ui->filterFreq->getFrequency();
-    if (offs)
-        settings->setValue("receiver/offset", offs);
-    else
-        settings->remove("receiver/offset");
+    // Filter offset now managed by tuner list, remove from settings
+    settings->remove("receiver/offset");
 
     qDebug() << __func__ << "*** FIXME_ SQL on/off";
     //int sql_lvl = double(ui->sqlSlider->value());  // note: dBFS*10 as int
@@ -578,34 +584,35 @@ void DockRxOpt::saveSettings(QSettings *settings)
         settings->remove("receiver/amsync_pllbw");
 }
 
-/** RX frequency changed through spin box */
+/** RX frequency changed through spin box - removed, freq shown in tuner list */
 void DockRxOpt::on_freqSpinBox_valueChanged(double freq)
 {
-    emit rxFreqChanged(1.e3 * freq);
+    Q_UNUSED(freq);
 }
 
 void DockRxOpt::setRxFreq(qint64 freq_hz)
 {
-    ui->freqSpinBox->blockSignals(true);
-    ui->freqSpinBox->setValue(1.e-3 * (double)freq_hz);
-    ui->freqSpinBox->blockSignals(false);
+    // Frequency display removed - shown in tuner list
+    Q_UNUSED(freq_hz);
 }
 
 void DockRxOpt::setRxFreqRange(qint64 min_hz, qint64 max_hz)
 {
-    ui->freqSpinBox->blockSignals(true);
-    ui->freqSpinBox->setRange(1.e-3 * (double)min_hz, 1.e-3 * (double)max_hz);
-    ui->freqSpinBox->blockSignals(false);
+    // Frequency display removed - shown in tuner list
+    Q_UNUSED(min_hz);
+    Q_UNUSED(max_hz);
 }
 
 void DockRxOpt::setResetLowerDigits(bool enabled)
 {
-    ui->filterFreq->setResetLowerDigits(enabled);
+    // Filter freq control removed
+    Q_UNUSED(enabled);
 }
 
 void DockRxOpt::setInvertScrolling(bool enabled)
 {
-    ui->filterFreq->setInvertScrolling(enabled);
+    // Filter freq control removed
+    Q_UNUSED(enabled);
 }
 
 /**
@@ -617,7 +624,21 @@ void DockRxOpt::setInvertScrolling(bool enabled)
  */
 void DockRxOpt::on_filterFreq_newFrequency(qint64 freq)
 {
+    if (d_updating_from_tuner)
+    {
+        return;
+    }
+
     updateHwFreq();
+
+    // Apply to active tuner if in multi-tuner mode
+    if (d_tuner_manager) {
+        int activeId = d_tuner_manager->get_active_channel();
+        ReceiverChannel* tuner = d_tuner_manager->get_channel_impl(activeId);
+        if (tuner) {
+            tuner->set_filter_offset((double)freq);
+        }
+    }
 
     emit filterOffsetChanged(freq);
 }
@@ -634,7 +655,9 @@ void DockRxOpt::on_filterCombo_activated(int index)
 
     qDebug() << "New filter preset:" << ui->filterCombo->currentText();
     qDebug() << "            shape:" << ui->filterShapeCombo->currentIndex();
-    emit demodSelected(ui->modeSelector->currentIndex());
+
+    int modeIndex = ui->modeSelector->currentIndex();
+    emit demodSelected(modeIndex);
 }
 
 /**
@@ -650,7 +673,53 @@ void DockRxOpt::on_filterCombo_activated(int index)
  */
 void DockRxOpt::on_modeSelector_activated(int index)
 {
+    if (d_updating_from_tuner)
+    {
+        return;
+    }
+
     updateDemodOptPage(index);
+
+    // Apply to active tuner if in multi-tuner mode
+    if (d_tuner_manager) {
+        int activeId = d_tuner_manager->get_active_channel();
+        ReceiverChannel* tuner = d_tuner_manager->get_channel_impl(activeId);
+        if (tuner) {
+            // Map DockRxOpt mode index to ReceiverChannel::rx_demod
+            // Note: ReceiverChannel uses RX_DEMOD_SSB for all SSB modes (LSB, USB, CW)
+            ReceiverChannel::rx_demod demod = ReceiverChannel::RX_DEMOD_OFF;
+            switch (index) {
+                case MODE_OFF:      demod = ReceiverChannel::RX_DEMOD_OFF;
+                                    break;
+                case MODE_RAW:      demod = ReceiverChannel::RX_DEMOD_NONE;
+                                    break;
+                case MODE_AM:       demod = ReceiverChannel::RX_DEMOD_AM;
+                                    break;
+                case MODE_AM_SYNC:  demod = ReceiverChannel::RX_DEMOD_AMSYNC;
+                                    break;
+                case MODE_LSB:      demod = ReceiverChannel::RX_DEMOD_SSB;
+                                    break;
+                case MODE_USB:      demod = ReceiverChannel::RX_DEMOD_SSB;
+                                    break;
+                case MODE_CWL:      demod = ReceiverChannel::RX_DEMOD_SSB;
+                                    break;
+                case MODE_CWU:      demod = ReceiverChannel::RX_DEMOD_SSB;
+                                    break;
+                case MODE_NFM:      demod = ReceiverChannel::RX_DEMOD_NFM;
+                                    break;
+                case MODE_WFM_MONO: demod = ReceiverChannel::RX_DEMOD_WFM_M;
+                                    break;
+                case MODE_WFM_STEREO: demod = ReceiverChannel::RX_DEMOD_WFM_S;
+                                    break;
+                case MODE_WFM_STEREO_OIRT: demod = ReceiverChannel::RX_DEMOD_WFM_S_OIRT;
+                                    break;
+                default:            demod = ReceiverChannel::RX_DEMOD_NFM;
+                                    break;
+            }
+            tuner->set_demod(demod);
+        }
+    }
+
     emit demodSelected(index);
 }
 
@@ -658,15 +727,25 @@ void DockRxOpt::updateDemodOptPage(int demod)
 {
     // update demodulator option widget
     if (demod == MODE_NFM)
+    {
         demodOpt->setCurrentPage(CDemodOptions::PAGE_FM_OPT);
+    }
     else if (demod == MODE_AM)
+    {
         demodOpt->setCurrentPage(CDemodOptions::PAGE_AM_OPT);
+    }
     else if (demod == MODE_CWL || demod == MODE_CWU)
+    {
         demodOpt->setCurrentPage(CDemodOptions::PAGE_CW_OPT);
+    }
     else if (demod == MODE_AM_SYNC)
+    {
         demodOpt->setCurrentPage(CDemodOptions::PAGE_AMSYNC_OPT);
+    }
     else
+    {
         demodOpt->setCurrentPage(CDemodOptions::PAGE_NO_OPT);
+    }
 }
 
 /** Show demodulator options. */
@@ -700,6 +779,11 @@ void DockRxOpt::on_resetSquelchButton_clicked()
 /** AGC preset has changed. */
 void DockRxOpt::on_agcPresetCombo_currentIndexChanged(int index)
 {
+    if (d_updating_from_tuner)
+    {
+        return;
+    }
+
     CAgcOptions::agc_preset_e preset = (CAgcOptions::agc_preset_e) index;
 
     switch (preset)
@@ -710,6 +794,14 @@ void DockRxOpt::on_agcPresetCombo_currentIndexChanged(int index)
     case CAgcOptions::AGC_USER:
         if (!agc_is_on)
         {
+            // Apply to active tuner if in multi-tuner mode
+            if (d_tuner_manager) {
+                int activeId = d_tuner_manager->get_active_channel();
+                ReceiverChannel* tuner = d_tuner_manager->get_channel_impl(activeId);
+                if (tuner) {
+                    tuner->set_agc_on(true);
+                }
+            }
             emit agcToggled(true);
             agc_is_on = true;
         }
@@ -719,6 +811,14 @@ void DockRxOpt::on_agcPresetCombo_currentIndexChanged(int index)
     case CAgcOptions::AGC_OFF:
         if (agc_is_on)
         {
+            // Apply to active tuner if in multi-tuner mode
+            if (d_tuner_manager) {
+                int activeId = d_tuner_manager->get_active_channel();
+                ReceiverChannel* tuner = d_tuner_manager->get_channel_impl(activeId);
+                if (tuner) {
+                    tuner->set_agc_on(false);
+                }
+            }
             emit agcToggled(false);
             agc_is_on = false;
         }
@@ -777,6 +877,20 @@ void DockRxOpt::agcOpt_gainChanged(int gain)
  */
 void DockRxOpt::on_sqlSpinBox_valueChanged(double value)
 {
+    if (d_updating_from_tuner)
+    {
+        return;
+    }
+
+    // Apply to active tuner if in multi-tuner mode
+    if (d_tuner_manager) {
+        int activeId = d_tuner_manager->get_active_channel();
+        ReceiverChannel* tuner = d_tuner_manager->get_channel_impl(activeId);
+        if (tuner) {
+            tuner->set_sql_level(value);
+        }
+    }
+
     emit sqlLevelChanged(value);
 }
 
@@ -833,22 +947,28 @@ void DockRxOpt::demodOpt_amSyncPllBwSelected(float pll_bw)
 /** Noise blanker 1 button has been toggled. */
 void DockRxOpt::on_nb1Button_toggled(bool checked)
 {
-    emit noiseBlankerChanged(1, checked, (float) nbOpt->nbThreshold(1));
+    float threshold = (float) nbOpt->nbThreshold(1);
+    emit noiseBlankerChanged(1, checked, threshold);
 }
 
 /** Noise blanker 2 button has been toggled. */
 void DockRxOpt::on_nb2Button_toggled(bool checked)
 {
-    emit noiseBlankerChanged(2, checked, (float) nbOpt->nbThreshold(2));
+    float threshold = (float) nbOpt->nbThreshold(2);
+    emit noiseBlankerChanged(2, checked, threshold);
 }
 
 /** Noise blanker threshold has been changed. */
 void DockRxOpt::nbOpt_thresholdChanged(int nbid, double value)
 {
     if (nbid == 1)
+    {
         emit noiseBlankerChanged(nbid, ui->nb1Button->isChecked(), (float) value);
+    }
     else
+    {
         emit noiseBlankerChanged(nbid, ui->nb2Button->isChecked(), (float) value);
+    }
 }
 
 void DockRxOpt::on_nbOptButton_clicked()
@@ -947,4 +1067,117 @@ void DockRxOpt::filterNormalShortcut() {
 void DockRxOpt::filterWideShortcut() {
     setCurrentFilter(FILTER_PRESET_WIDE);
     on_filterCombo_activated(FILTER_PRESET_WIDE);
+}
+
+// Multi-tuner support methods
+
+void DockRxOpt::setTunerManager(TunerManager* manager)
+{
+    d_tuner_manager = manager;
+}
+
+void DockRxOpt::setTunerId(int tuner_id)
+{
+    d_tuner_id = tuner_id;
+
+    // Update UI from this specific tuner
+    if (d_tuner_manager && tuner_id >= 0) {
+        ReceiverChannel* tuner = d_tuner_manager->get_channel_impl(tuner_id);
+        if (tuner) {
+            updateUiFromTuner(tuner);
+        }
+    }
+}
+
+void DockRxOpt::setTunerColor(const QColor& color)
+{
+    // Set the color indicator using the UI label
+    if (ui->tunerColorLabel) {
+        ui->tunerColorLabel->setFixedSize(16, 16);
+        ui->tunerColorLabel->setStyleSheet(QString(
+            "background-color: %1; border: 1px solid gray; border-radius: 2px;"
+        ).arg(color.name()));
+    }
+}
+
+void DockRxOpt::onActiveTunerChanged(int tuner_id)
+{
+    if (!d_tuner_manager)
+    {
+        return;
+    }
+
+    ReceiverChannel* tuner = d_tuner_manager->get_channel_impl(tuner_id);
+    if (tuner) {
+        updateUiFromTuner(tuner);
+        // Update the dock title to show which tuner is active
+        QString title = QString("Receiver Options - Tuner %1").arg(tuner_id);
+        setWindowTitle(title);
+    }
+}
+
+void DockRxOpt::updateUiFromTuner(ReceiverChannel* tuner)
+{
+    if (!tuner)
+    {
+        return;
+    }
+
+    // Set flag to prevent signal feedback loops
+    d_updating_from_tuner = true;
+
+    // Filter offset and hardware frequency display removed - shown elsewhere
+
+    // Update demodulation mode
+    // Map ReceiverChannel::rx_demod to DockRxOpt mode index
+    // Note: ReceiverChannel uses RX_DEMOD_SSB for all SSB modes, so we default to USB
+    int demod = tuner->get_demod();
+    int modeIdx = MODE_OFF;
+    switch (demod) {
+        case ReceiverChannel::RX_DEMOD_OFF:
+            modeIdx = MODE_OFF;
+            break;
+        case ReceiverChannel::RX_DEMOD_NONE:
+            modeIdx = MODE_RAW;
+            break;
+        case ReceiverChannel::RX_DEMOD_NFM:
+            modeIdx = MODE_NFM;
+            break;
+        case ReceiverChannel::RX_DEMOD_AM:
+            modeIdx = MODE_AM;
+            break;
+        case ReceiverChannel::RX_DEMOD_SSB:
+            modeIdx = MODE_USB;  // Default SSB to USB
+            break;
+        case ReceiverChannel::RX_DEMOD_WFM_M:
+            modeIdx = MODE_WFM_MONO;
+            break;
+        case ReceiverChannel::RX_DEMOD_WFM_S:
+            modeIdx = MODE_WFM_STEREO;
+            break;
+        case ReceiverChannel::RX_DEMOD_WFM_S_OIRT:
+            modeIdx = MODE_WFM_STEREO_OIRT;
+            break;
+        case ReceiverChannel::RX_DEMOD_AMSYNC:
+            modeIdx = MODE_AM_SYNC;
+            break;
+        default:
+            modeIdx = MODE_NFM;
+            break;
+    }
+    ui->modeSelector->setCurrentIndex(modeIdx);
+    updateDemodOptPage(modeIdx);
+
+    // Update squelch level
+    double sqlLevel = tuner->get_sql_level();
+    ui->sqlSpinBox->setValue(sqlLevel);
+
+    // Update AGC state
+    bool agcOn = tuner->get_agc_on();
+    agc_is_on = agcOn;
+    ui->agcPresetCombo->setEnabled(agcOn);
+
+    // Clear the updating flag
+    d_updating_from_tuner = false;
+
 }

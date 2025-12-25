@@ -4,6 +4,7 @@
  *           https://gqrx.dk/
  *
  * Copyright 2011-2016 Alexandru Csete OZ9AEC.
+ * Copyright 2025 David Kierzkowski K9DPD
  *
  * Gqrx is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -114,6 +115,23 @@ public:
     bool has_amsync() { return true; }
     void set_amsync_dcr(bool enabled);
     void set_amsync_pll_bw(float pll_bw);
+
+    /* IQ recording tap point */
+    static const int IQ_TAP_PORT = 2;  /*!< Output port index for IQ tap (complex, 96 kHz) */
+
+    /**
+     * @brief Get the hierarchical block for IQ recording tap point.
+     * @return self() - connect to output port IQ_TAP_PORT (2) for 96 kHz complex IQ
+     * @note The IQ tap is on output port 2 of this hierarchical block.
+     *       Caller should use: connect(get_filter_output(), IQ_TAP_PORT, recorder, 0)
+     */
+    gr::basic_block_sptr get_filter_output() { return self(); }
+
+    /**
+     * @brief Get the filter output sample rate.
+     * @return 96000 Hz (PREF_QUAD_RATE)
+     */
+    static double get_filter_rate() { return 96000.0; }
 
 private:
     bool   d_running;          /*!< Whether receiver is running or not. */

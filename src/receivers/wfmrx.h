@@ -5,6 +5,7 @@
  *
  * Copyright 2012 Alexandru Csete OZ9AEC.
  * FM stereo implementation by Alex Grinkov a.grinkov(at)gmail.com.
+ * Copyright 2025 David Kierzkowski K9DPD
  *
  * Gqrx is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,6 +26,7 @@
 #define WFMRX_H
 
 #include <gnuradio/analog/simple_squelch_cc.h>
+#include <gnuradio/blocks/multiply_const.h>
 #include "receivers/receiver_base.h"
 #include "dsp/rx_noise_blanker_cc.h"
 #include "dsp/rx_filter.h"
@@ -108,6 +110,23 @@ public:
     void reset_rds_parser();
     bool is_rds_decoder_active();
 
+    /* IQ recording tap point */
+    static const int IQ_TAP_PORT = 2;  /*!< Output port index for IQ tap (complex, 240 kHz) */
+
+    /**
+     * @brief Get the hierarchical block for IQ recording tap point.
+     * @return self() - connect to output port IQ_TAP_PORT (2) for 240 kHz complex IQ
+     * @note The IQ tap is on output port 2 of this hierarchical block.
+     *       Caller should use: connect(get_filter_output(), IQ_TAP_PORT, recorder, 0)
+     */
+    gr::basic_block_sptr get_filter_output() { return self(); }
+
+    /**
+     * @brief Get the filter output sample rate.
+     * @return 240000 Hz (PREF_QUAD_RATE for WFM)
+     */
+    static double get_filter_rate() { return 240000.0; }
+
 private:
     bool   d_running;          /*!< Whether receiver is running or not. */
     float  d_quad_rate;        /*!< Input sample rate. */
@@ -121,6 +140,7 @@ private:
     rx_meter_c_sptr           meter;     /*!< Signal strength. */
     gr::analog::simple_squelch_cc::sptr sql;       /*!< Squelch. */
     rx_demod_fm_sptr          demod_fm;  /*!< FM demodulator. */
+    gr::blocks::multiply_const_ff::sptr audio_gain;  /*!< Audio gain boost for WFM. */
     stereo_demod_sptr         stereo;    /*!< FM stereo demodulator. */
     stereo_demod_sptr         stereo_oirt;    /*!< FM stereo oirt demodulator. */
     stereo_demod_sptr         mono;      /*!< FM stereo demodulator OFF. */

@@ -4,6 +4,7 @@
  *           https://gqrx.dk/
  *
  * Copyright 2011-2014 Alexandru Csete OZ9AEC.
+ * Copyright 2025 David Kierzkowski K9DPD
  *
  * Gqrx is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,6 +33,7 @@
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QSvgWidget>
+#include <map>
 
 #include "qtgui/dockrxopt.h"
 #include "qtgui/dockaudio.h"
@@ -46,6 +48,9 @@
 #include "applications/gqrx/recentconfig.h"
 #include "applications/gqrx/remote_control.h"
 #include "applications/gqrx/receiver.h"
+#include "tuner_manager.h"
+#include "interfaces/i_receiver_backend.h"
+#include "qtgui/tuner_list.h"
 
 namespace Ui {
     class MainWindow;  /*! The main window UI */
@@ -122,7 +127,33 @@ private:
     float    d_avg_fft_rate;
     bool     d_frame_drop;
 
+    // CPU monitoring
+    quint64  d_prev_cpu_user;
+    quint64  d_prev_cpu_system;
+    quint64  d_prev_cpu_idle;
+    float    d_cpu_usage;
+
+    // Disk I/O monitoring (actual bytes read/written by gqrx)
+    quint64  d_prev_disk_read;
+    quint64  d_prev_disk_write;
+    quint64  d_last_diskio_time_ms;
+    float    d_disk_read_rate;   // bytes per second
+    float    d_disk_write_rate;  // bytes per second
+
     receiver *rx;
+
+    // Multi-tuner support
+    std::shared_ptr<TunerManager> tuner_manager;
+    TunerList *tuner_list_widget;
+    QDockWidget *uiDockTunerList;
+    std::map<int, int> channel_volumes;     // Per-channel volume (0-100), default 100
+    std::map<int, bool> channel_muted;      // Per-channel mute state
+    float d_main_gain_linear;               // Main volume as linear gain
+
+    // Center button zoom cycling state
+    int center_zoom_state;                  // 0=original, 1=close, 2=medium, 3=wide
+    int center_zoom_tuner_id;               // Which tuner we're cycling for
+    quint32 center_zoom_original_span;      // Span before zooming
 
     RemoteControl *remote;
 
@@ -138,6 +169,9 @@ private:
     void updateFrequencyRange();
     void updateDeltaAndCenter();
     void updateGainStages(bool read_from_device);
+    void updateSourceStatusLabels();
+    void updateLeftStats();
+    float getCpuUsage();
     void showSimpleTextFile(const QString &resource_path,
                             const QString &window_title);
     /* key shortcuts */
@@ -145,6 +179,38 @@ private:
     void rxOffsetZeroShortcut();
     void toggleFreezeShortcut();
     void toggleMarkers();
+
+private slots:
+    void onTunerRemoved(int tuner_id);
+    void onTunerTypeChanged(int tuner_id, ReceiverType type);
+    void onTunerEnabledChanged(int tuner_id, bool enabled);
+    void onTunerNameChanged(int tuner_id, const QString& name);
+    void onTunerColorChanged(int tuner_id, const QColor& color);
+    void onTunerAlphaChanged(int tuner_id, int alpha);
+    void onTunerVolumeChanged(int tuner_id, int volume);
+    void onTunerMuteToggled(int tuner_id, bool muted);
+    void onTunerRecordingToggled(int tuner_id, bool recording);
+    void onTunerCenterRequested(int tuner_id);
+    void onTunerZoomRequested(int tuner_id);
+    void onTunerFrequencyChanged(int tuner_id, qint64 freq);
+    void onTunerFilterWidthChanged(int tuner_id, int filter_low, int filter_high);
+    // New settings slots
+    void onTunerSquelchChanged(int tuner_id, double level_db);
+    void onTunerAutoSquelchRequested(int tuner_id);
+    void onTunerFilterPresetChanged(int tuner_id, int preset);
+    void onTunerAgcPresetChanged(int tuner_id, int preset);
+    void onTunerNbStateChanged(int tuner_id, int state);
+    // Expanded section slots
+    void onTunerFilterShapeChanged(int tuner_id, int shape);
+    void onTunerNb1ThresholdChanged(int tuner_id, float threshold);
+    void onTunerNb2ThresholdChanged(int tuner_id, float threshold);
+    void onTunerAgcHangChanged(int tuner_id, bool use_hang);
+    void onTunerAgcThresholdChanged(int tuner_id, int threshold);
+    void onTunerAgcDecayChanged(int tuner_id, int decay_ms);
+    void onTunerAgcGainChanged(int tuner_id, int gain);
+    void addTuner();
+    void addTunerWithType(ReceiverType type);
+    void removeTuner();
 
 private slots:
     /* RecentConfig */
@@ -216,6 +282,9 @@ private slots:
     /* FFT plot */
     void on_plotter_newDemodFreq(qint64 freq, qint64 delta);   /*! New demod freq (aka. filter offset). */
     void on_plotter_newFilterFreq(int low, int high);    /*! New filter width */
+    void onTunerDragged(int tuner_id, qint64 freq);      /*! Tuner marker dragged to new frequency */
+    void onFilterResized(int tuner_id, int filter_low, int filter_high);  /*! Filter edges dragged */
+    void onPanSdrFrequency(int dragged_tuner_id, qint64 new_freq); /*! Shift+drag to pan SDR frequency */
 
     /* RDS */
     void setRdsDecoder(bool checked);

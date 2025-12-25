@@ -4,6 +4,7 @@
  *           https://gqrx.dk/
  *
  * Copyright 2011-2016 Alexandru Csete OZ9AEC.
+ * Copyright 2025 David Kierzkowski K9DPD
  *
  * Gqrx is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,7 +22,6 @@
  * Boston, MA 02110-1301, USA.
  */
 #include <cmath>
-#include <iostream>
 #include <QDebug>
 #include "receivers/nbrx.h"
 
@@ -40,7 +40,9 @@ nbrx::nbrx(float quad_rate, float audio_rate)
       d_audio_rate(audio_rate),
       d_demod(NBRX_DEMOD_FM)
 {
-    iq_resamp = make_resampler_cc(PREF_QUAD_RATE/d_quad_rate);
+
+    float resamp_rate = PREF_QUAD_RATE/d_quad_rate;
+    iq_resamp = make_resampler_cc(resamp_rate);
 
     nb = make_rx_nb_cc((double)PREF_QUAD_RATE, 3.3, 2.5);
     filter = make_rx_filter((double)PREF_QUAD_RATE, -5000.0, 5000.0, 1000.0);
@@ -60,13 +62,12 @@ nbrx::nbrx(float quad_rate, float audio_rate)
     nb->set_min_output_buffer(32768);
 
     audio_rr0.reset();
-    audio_rr1.reset();
+    audio_rr1.reset();  // Lazy init - only created when switching to raw I/Q mode
     if (d_audio_rate != PREF_QUAD_RATE)
     {
-        std::cout << "Resampling audio " << PREF_QUAD_RATE << " -> "
-                  << d_audio_rate << std::endl;
         audio_rr0 = make_resampler_ff(d_audio_rate/PREF_QUAD_RATE);
-        audio_rr1 = make_resampler_ff(d_audio_rate/PREF_QUAD_RATE);
+        // audio_rr1 is only needed for raw I/Q mode - create it lazily in set_demod()
+        // Creating it here when unused causes flowgraph validation issues
     }
 
     demod = demod_fm;
@@ -75,6 +76,7 @@ nbrx::nbrx(float quad_rate, float audio_rate)
     connect(nb, 0, filter, 0);
     connect(filter, 0, meter, 0);
     connect(filter, 0, sql, 0);
+    connect(filter, 0, self(), 2);  // IQ tap output at 96 kHz (output port 2)
     connect(sql, 0, agc, 0);
     connect(agc, 0, demod, 0);
 
@@ -95,14 +97,12 @@ nbrx::nbrx(float quad_rate, float audio_rate)
 bool nbrx::start()
 {
     d_running = true;
-
     return true;
 }
 
 bool nbrx::stop()
 {
     d_running = false;
-
     return true;
 }
 
@@ -112,9 +112,11 @@ void nbrx::set_quad_rate(float quad_rate)
     {
         qDebug() << "Changing NB_RX quad rate:"  << d_quad_rate << "->" << quad_rate;
         d_quad_rate = quad_rate;
-        lock();
-        iq_resamp->set_rate(PREF_QUAD_RATE/d_quad_rate);
-        unlock();
+        float new_resamp_rate = PREF_QUAD_RATE/d_quad_rate;
+        // NOTE: Do NOT call lock()/unlock() here!
+        // The parent flowgraph should already be stopped/locked.
+        // Nested hier_block2 locking corrupts GNU Radio's connection state.
+        iq_resamp->set_rate(new_resamp_rate);
     }
 }
 
@@ -193,9 +195,11 @@ void nbrx::set_demod(int rx_demod)
 {
     nbrx_demod current_demod = d_demod;
 
+
     /* check if new demodulator selection is valid */
-    if ((rx_demod < NBRX_DEMOD_NONE) || (rx_demod >= NBRX_DEMOD_NUM))
+    if ((rx_demod < NBRX_DEMOD_NONE) || (rx_demod >= NBRX_DEMOD_NUM)) {
         return;
+    }
 
     if (rx_demod == current_demod) {
         /* nothing to do */
@@ -205,7 +209,7 @@ void nbrx::set_demod(int rx_demod)
     disconnect(agc, 0, demod, 0);
     if (audio_rr0)
     {
-        if (current_demod == NBRX_DEMOD_NONE)
+        if (current_demod == NBRX_DEMOD_NONE && audio_rr1)
         {
             disconnect(demod, 0, audio_rr0, 0);
             disconnect(demod, 1, audio_rr1, 0);
@@ -269,6 +273,10 @@ void nbrx::set_demod(int rx_demod)
     {
         if (d_demod == NBRX_DEMOD_NONE)
         {
+            // Lazy create audio_rr1 when first needed
+            if (!audio_rr1) {
+                audio_rr1 = make_resampler_ff((float)d_audio_rate/PREF_QUAD_RATE);
+            }
             connect(demod, 0, audio_rr0, 0);
             connect(demod, 1, audio_rr1, 0);
 

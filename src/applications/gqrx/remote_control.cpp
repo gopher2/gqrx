@@ -4,6 +4,7 @@
  *           https://gqrx.dk/
  *
  * Copyright 2013 Alexandru Csete OZ9AEC.
+ * Copyright 2025 David Kierzkowski K9DPD
  *
  * Gqrx is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,11 +23,13 @@
  */
 #include <cmath>
 #include <cstdlib>
-#include <iostream>
 #include <QString>
 #include <QStringList>
 #include "remote_control.h"
 #include "qtgui/dockrxopt.h"
+#include "tuner_manager.h"
+#include "receiver_channel.h"
+#include <algorithm>
 
 #define DEFAULT_RC_PORT            7356
 #define DEFAULT_RC_ALLOWED_HOSTS   "127.0.0.1"
@@ -58,6 +61,7 @@ RemoteControl::RemoteControl(QObject *parent) :
     rc_port = DEFAULT_RC_PORT;
     rc_allowed_hosts.append(DEFAULT_RC_ALLOWED_HOSTS);
 
+
     connect(&rc_server, SIGNAL(newConnection()), this, SLOT(acceptConnection()));
 }
 
@@ -70,7 +74,9 @@ RemoteControl::~RemoteControl()
 void RemoteControl::start_server()
 {
     if (!rc_server.isListening())
+    {
         rc_server.listen(QHostAddress::Any, rc_port);
+    }
 }
 
 /*! \brief Stop the server. */
@@ -82,10 +88,11 @@ void RemoteControl::stop_server()
 	}
 
 	rc_sockets.clear();
-	
-    if (rc_server.isListening())
-        rc_server.close();
 
+    if (rc_server.isListening())
+    {
+        rc_server.close();
+    }
 }
 
 /*! \brief Read settings. */
@@ -141,7 +148,9 @@ void RemoteControl::saveSettings(QSettings *settings) const
 void RemoteControl::setPort(int port)
 {
     if (port == rc_port)
+    {
         return;
+    }
 
     rc_port = port;
     if (rc_server.isListening())
@@ -179,8 +188,6 @@ void RemoteControl::acceptConnection()
         }
     }
 
-    std::cout << "*** Remote connection attempt from " << address.toString().toStdString()
-              << " (not in allowed list)" << std::endl;
     socket->close();
     socket->deleteLater();
 }
@@ -190,7 +197,7 @@ void RemoteControl::socketDisconnect()
 	QTcpSocket *socket = (QTcpSocket*)sender();
 	rc_sockets.erase(socket);
 	socket->close();
-	socket->deleteLater();	
+	socket->deleteLater();
 }
 
 /*! \brief Start reading from the socket.
@@ -208,7 +215,9 @@ void RemoteControl::startRead()
 
         bytes_read = rc_socket->readLine(buffer, 1024);
         if (bytes_read < 2)  // command + '\n'
+        {
             continue;
+        }
 
 #if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
         QStringList cmdlist = QString(buffer).trimmed().split(" ", QString::SkipEmptyParts);
@@ -217,49 +226,121 @@ void RemoteControl::startRead()
 #endif
 
         if (cmdlist.size() == 0)
+        {
             continue;
+        }
 
         QString cmd = cmdlist[0];
-        if (cmd == "f")
-            answer = cmd_get_freq();
-        else if (cmd == "F")
-            answer = cmd_set_freq(cmdlist);
-        else if (cmd == "m")
-            answer = cmd_get_mode();
-        else if (cmd == "M")
-            answer = cmd_set_mode(cmdlist);
+
+        // Multi-tuner command handling
+        if (cmd == "f") {
+            // Check for multi-tuner syntax: f <tuner_index>
+            if (cmdlist.size() >= 2) {
+                answer = cmd_get_freq_multi(cmdlist);
+            } else {
+                answer = cmd_get_freq();
+            }
+        }
+        else if (cmd == "F") {
+            // Check for multi-tuner syntax: F <tuner_index> <freq>
+            if (cmdlist.size() >= 3) {
+                answer = cmd_set_freq_multi(cmdlist);
+            } else {
+                answer = cmd_set_freq(cmdlist);
+            }
+        }
+        else if (cmd == "m") {
+            // Check for multi-tuner syntax: m <tuner_index>
+            if (cmdlist.size() >= 2) {
+                answer = cmd_get_mode_multi(cmdlist);
+            } else {
+                answer = cmd_get_mode();
+            }
+        }
+        else if (cmd == "M") {
+            // Check for multi-tuner syntax: M <tuner_index> <mode>
+            if (cmdlist.size() >= 3) {
+                answer = cmd_set_mode_multi(cmdlist);
+            } else {
+                answer = cmd_set_mode(cmdlist);
+            }
+        }
         else if (cmd == "l")
+        {
             answer = cmd_get_level(cmdlist);
+        }
         else if (cmd == "L")
+        {
             answer = cmd_set_level(cmdlist);
+        }
         else if (cmd == "u")
+        {
             answer = cmd_get_func(cmdlist);
+        }
         else if (cmd == "U")
+        {
             answer = cmd_set_func(cmdlist);
+        }
         else if (cmd == "v")
+        {
             answer = cmd_get_vfo();
+        }
         else if (cmd == "V")
+        {
             answer = cmd_set_vfo(cmdlist);
+        }
         else if (cmd == "s")
+        {
             answer = cmd_get_split_vfo();
+        }
         else if (cmd == "S")
+        {
             answer = cmd_set_split_vfo();
+        }
         else if (cmd == "p")
+        {
             answer = cmd_get_param(cmdlist);
+        }
         else if (cmd == "_")
+        {
             answer = cmd_get_info();
+        }
         else if (cmd == "AOS")
+        {
             answer = cmd_AOS();
+        }
         else if (cmd == "LOS")
+        {
             answer = cmd_LOS();
+        }
         else if (cmd == "LNB_LO")
+        {
             answer = cmd_lnb_lo(cmdlist);
+        }
         else if (cmd == "\\chk_vfo")
+        {
             answer = QString("0\n");
+        }
         else if (cmd == "\\dump_state")
+        {
             answer = cmd_dump_state();
+        }
+        else if (cmd == "TUNER_ADD")
+        {
+            answer = cmd_tuner_add(cmdlist);
+        }
+        else if (cmd == "TUNER_REMOVE")
+        {
+            answer = cmd_tuner_remove(cmdlist);
+        }
+        else if (cmd == "TUNER_LIST")
+        {
+            answer = cmd_tuner_list();
+        }
         else if (cmd == "\\get_powerstat")
+        {
             answer = QString("1\n");
+        }
         else if (cmd == "q" || cmd == "Q")
         {
             // FIXME: for now we assume 'close' command
@@ -322,7 +403,9 @@ void RemoteControl::setMode(int mode)
     rc_mode = mode;
 
     if (rc_mode == 0)
+    {
         audio_recorder_status = false;
+    }
 }
 
 /*! \brief Set passband (from mainwindow). */
@@ -339,6 +422,7 @@ void RemoteControl::setNewRemoteFreq(qint64 freq)
     qint64 bwh_eff = 0.8f * (float)bw_half;
 
     rc_filter_offset += delta;
+
     if ((rc_filter_offset > 0 && rc_filter_offset + rc_passband_hi < bwh_eff) ||
         (rc_filter_offset < 0 && rc_filter_offset + rc_passband_lo > -bwh_eff))
     {
@@ -350,9 +434,13 @@ void RemoteControl::setNewRemoteFreq(qint64 freq)
         // moving filter offset would push it too close to or beyond the edge
         // move it close to the center and adjust hardware freq
         if (rc_filter_offset < 0)
+        {
             rc_filter_offset = -0.2f * bwh_eff;
+        }
         else
+        {
             rc_filter_offset = 0.2f * bwh_eff;
+        }
         emit newFilterOffset(rc_filter_offset);
         emit newFrequency(freq);
     }
@@ -383,7 +471,9 @@ void RemoteControl::startAudioRecorder(QString unused)
 {
     /* Check first if a demodulation mode is set. */
     if (rc_mode > 0)
+    {
         audio_recorder_status = true;
+    }
 }
 
 /*! \brief Stop audio recorder (from mainwindow). */
@@ -505,6 +595,10 @@ int RemoteControl::modeStrToInt(QString mode_str)
     {
         mode_int = DockRxOpt::MODE_CWL;
         hamlib_compatible = true;
+
+    // Initialize multi-tuner support
+    tuner_manager_ = nullptr;
+    default_tuner_index_ = 0;
     }
     else if (mode_str.compare("CWU", Qt::CaseInsensitive) == 0)
     {
@@ -515,6 +609,10 @@ int RemoteControl::modeStrToInt(QString mode_str)
     {
         mode_int = DockRxOpt::MODE_CWU;
         hamlib_compatible = true;
+
+    // Initialize multi-tuner support
+    tuner_manager_ = nullptr;
+    default_tuner_index_ = 0;
     }
     else if (mode_str.compare("FM", Qt::CaseInsensitive) == 0)
     {
@@ -625,9 +723,9 @@ QString RemoteControl::cmd_set_freq(QStringList cmdlist)
 /* Get mode and passband */
 QString RemoteControl::cmd_get_mode()
 {
-    return QString("%1\n%2\n")
-                   .arg(intToModeStr(rc_mode))
-                   .arg(rc_passband_hi - rc_passband_lo);
+    QString mode_str = intToModeStr(rc_mode);
+    int passband = rc_passband_hi - rc_passband_lo;
+    return QString("%1\n%2\n").arg(mode_str).arg(passband);
 }
 
 /* Set mode and passband */
@@ -637,7 +735,9 @@ QString RemoteControl::cmd_set_mode(QStringList cmdlist)
     QString cmd_arg = cmdlist.value(1, "");
 
     if (cmd_arg == "?")
+    {
         answer = QString("OFF RAW AM AMS LSB USB CWL CWR CWU CW FM WFM WFM_ST WFM_ST_OIRT\n");
+    }
     else
     {
         int mode = modeStrToInt(cmd_arg);
@@ -653,10 +753,14 @@ QString RemoteControl::cmd_set_mode(QStringList cmdlist)
 
             int passband = cmdlist.value(2, "0").toInt();
             if ( passband != 0 )
+            {
                 emit newPassband(passband);
+            }
 
             if (rc_mode == 0)
+            {
                 audio_recorder_status = false;
+            }
 
             answer = QString("RPRT 0\n");
         }
@@ -973,7 +1077,8 @@ QString RemoteControl::cmd_lnb_lo(QStringList cmdlist)
     }
     else
     {
-        return QString("%1\n").arg((qint64)(rc_lnb_lo_mhz * 1e6));
+        qint64 lnb_lo = (qint64)(rc_lnb_lo_mhz * 1e6);
+        return QString("%1\n").arg(lnb_lo);
     }
 }
 
@@ -1053,4 +1158,208 @@ QString RemoteControl::cmd_dump_state() const
         "0\n" /* RIG_PARM_NONE */
         /* Bit field list of set parm */
         "0\n" /* RIG_PARM_NONE */);
+}
+
+// ============================================================================
+// Multi-tuner extensions
+// ============================================================================
+
+/*! \brief Set the TunerManager instance for multi-tuner support. */
+void RemoteControl::setTunerManager(std::shared_ptr<TunerManager> tuner_manager)
+{
+    tuner_manager_ = tuner_manager;
+}
+
+/*! \brief Parse tuner index from command list with optional default. */
+int RemoteControl::parseTunerIndex(const QStringList& cmdlist, int default_index)
+{
+    if (cmdlist.size() >= 2) {
+        bool ok;
+        int tuner_index = cmdlist[1].toInt(&ok);
+        if (ok && isValidTunerIndex(tuner_index)) {
+            return tuner_index;
+        }
+    }
+    return default_index;
+}
+
+/*! \brief Check if tuner index is valid. */
+bool RemoteControl::isValidTunerIndex(int tuner_index)
+{
+    if (!tuner_manager_) {
+        bool valid = (tuner_index == 0);
+        return valid;  // Only tuner 0 available in single-tuner mode
+    }
+
+    auto tuner_ids = tuner_manager_->get_all_channels();
+    bool valid = std::find(tuner_ids.begin(), tuner_ids.end(), tuner_index) != tuner_ids.end();
+    return valid;
+}
+
+/*! \brief Get frequency from specific tuner. */
+QString RemoteControl::cmd_get_freq_multi(QStringList cmdlist) const
+{
+    int tuner_index = const_cast<RemoteControl*>(this)->parseTunerIndex(cmdlist, default_tuner_index_);
+
+    if (!tuner_manager_) {
+        // Fallback to single-tuner behavior
+        return cmd_get_freq();
+    }
+
+    auto* tuner = tuner_manager_->get_channel_impl(tuner_index);
+    if (!tuner) {
+        return QString("RPRT 1\n");
+    }
+
+    double freq = tuner->get_center_freq();
+    return QString("%1\n").arg((qint64)freq);
+}
+
+/*! \brief Set frequency for specific tuner. */
+QString RemoteControl::cmd_set_freq_multi(QStringList cmdlist)
+{
+    if (cmdlist.size() < 3) {
+        return cmd_set_freq(cmdlist);  // Fallback to backward compatible behavior
+    }
+
+    bool ok;
+    int tuner_index = cmdlist[1].toInt(&ok);
+    if (!ok) {
+        return QString("RPRT 1\n");
+    }
+
+    qint64 freq = cmdlist[2].toLongLong(&ok);
+    if (!ok) {
+        return QString("RPRT 1\n");
+    }
+
+    if (!tuner_manager_) {
+        if (tuner_index == 0) {
+            return cmd_set_freq(QStringList() << "F" << cmdlist[2]);
+        }
+        return QString("RPRT 1\n");
+    }
+
+    auto* tuner = tuner_manager_->get_channel_impl(tuner_index);
+    if (!tuner) {
+        return QString("RPRT 1\n");
+    }
+
+    tuner->set_center_freq(freq);
+    return QString("RPRT 0\n");
+}
+
+/*! \brief Get mode from specific tuner. */
+QString RemoteControl::cmd_get_mode_multi(QStringList cmdlist)
+{
+    int tuner_index = parseTunerIndex(cmdlist, default_tuner_index_);
+
+    if (!tuner_manager_) {
+        return cmd_get_mode();
+    }
+
+    auto* tuner = tuner_manager_->get_channel_impl(tuner_index);
+    if (!tuner) {
+        return QString("RPRT 1\n");
+    }
+
+    ReceiverChannel::rx_demod mode = tuner->get_demod();
+    QString mode_str = intToModeStr(static_cast<int>(mode));
+    return QString("%1\n%2\n").arg(mode_str).arg(0); // mode + passband
+}
+
+/*! \brief Set mode for specific tuner. */
+QString RemoteControl::cmd_set_mode_multi(QStringList cmdlist)
+{
+    if (cmdlist.size() < 3) {
+        return cmd_set_mode(cmdlist);  // Fallback to backward compatible behavior
+    }
+
+    bool ok;
+    int tuner_index = cmdlist[1].toInt(&ok);
+    if (!ok) {
+        return QString("RPRT 1\n");
+    }
+
+    QString mode_str = cmdlist[2];
+    int mode_int = modeStrToInt(mode_str);
+    if (mode_int < 0) {
+        return QString("RPRT 1\n");
+    }
+
+    if (!tuner_manager_) {
+        if (tuner_index == 0) {
+            return cmd_set_mode(QStringList() << "M" << mode_str);
+        }
+        return QString("RPRT 1\n");
+    }
+
+    auto* tuner = tuner_manager_->get_channel_impl(tuner_index);
+    if (!tuner) {
+        return QString("RPRT 1\n");
+    }
+
+    tuner->set_demod(static_cast<ReceiverChannel::rx_demod>(mode_int));
+    return QString("RPRT 0\n");
+}
+
+/*! \brief Add new tuner. */
+QString RemoteControl::cmd_tuner_add(QStringList cmdlist)
+{
+    if (!tuner_manager_) {
+        return QString("RPRT 1\n");  // Multi-tuner not supported
+    }
+
+    // Use IChannelManager API
+    channel_id new_tuner_id = tuner_manager_->create_channel(ChannelType::MANUAL, ReceiverType::ANALOG_NFM);
+    if (new_tuner_id < 0) {
+        return QString("RPRT 1\n");
+    }
+
+    return QString("%1\n").arg(new_tuner_id);
+}
+
+/*! \brief Remove tuner. */
+QString RemoteControl::cmd_tuner_remove(QStringList cmdlist)
+{
+    if (!tuner_manager_) {
+        return QString("RPRT 1\n");  // Multi-tuner not supported
+    }
+
+    if (cmdlist.size() < 2) {
+        return QString("RPRT 1\n");  // Missing tuner index
+    }
+
+    bool ok;
+    int tuner_index = cmdlist[1].toInt(&ok);
+    if (!ok) {
+        return QString("RPRT 1\n");
+    }
+
+    // Use IChannelManager API
+    tuner_manager_->destroy_channel(tuner_index);
+    return QString("RPRT 0\n");
+}
+
+/*! \brief List all active tuners. */
+QString RemoteControl::cmd_tuner_list()
+{
+    if (!tuner_manager_) {
+        return QString("0\n");  // Only tuner 0 available in single-tuner mode
+    }
+
+    auto tuner_ids = tuner_manager_->get_all_channels();
+    QStringList result;
+
+    for (channel_id id : tuner_ids) {
+        auto* tuner = tuner_manager_->get_channel_impl(id);
+        if (tuner) {
+            double freq = tuner->get_center_freq();
+            ReceiverChannel::rx_demod mode = tuner->get_demod();
+            QString mode_str = intToModeStr(static_cast<int>(mode));
+            result << QString("%1 %2 %3").arg(id).arg((qint64)freq).arg(mode_str);
+        }
+    }
+
+    return result.join("\n") + "\n";
 }

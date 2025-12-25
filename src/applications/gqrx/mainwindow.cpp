@@ -5,6 +5,7 @@
  *
  * Copyright 2011-2014 Alexandru Csete OZ9AEC.
  * Copyright (C) 2013 by Elias Oenal <EliasOenal@gmail.com>
+ * Copyright 2025 David Kierzkowski K9DPD
  *
  * Gqrx is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,13 +24,27 @@
  */
 #include <string>
 #include <vector>
+#include <cmath>
 #include <volk/volk.h>
+
+// CPU and disk I/O monitoring
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/processor_info.h>
+#include <mach/mach_host.h>
+#include <libproc.h>
+#include <sys/resource.h>
+#elif defined(__linux__)
+#include <fstream>
+#endif
+#include <unistd.h>
 
 #include <QSettings>
 #include <QByteArray>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDialogButtonBox>
+#include <QDockWidget>
 #include <QFile>
 #include <QGroupBox>
 #include <QJsonDocument>
@@ -43,12 +58,14 @@
 #include <QTextBrowser>
 #include <QTextCursor>
 #include <QTextStream>
-#include <QtGlobal>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QSvgWidget>
 #include "qtgui/ioconfig.h"
+#include "qtgui/multi_tuner_plotter.h"
+#include "qtgui/tuner_list.h"
 #include "mainwindow.h"
+#include "filename_template.h"
 #include "qtgui/dxc_options.h"
 #include "qtgui/dxc_spots.h"
 
@@ -58,6 +75,7 @@
 /* DSP */
 #include "receiver.h"
 #include "remote_control_settings.h"
+#include "backends/receiver_backend_factory.h"
 
 #include "qtgui/bookmarkstaglist.h"
 #include "qtgui/bandplan.h"
@@ -72,7 +90,20 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     d_fftWindowType(0),
     d_fftNormalizeEnergy(false),
     d_have_audio(true),
-    dec_afsk1200(nullptr)
+    dec_afsk1200(nullptr),
+    d_prev_cpu_user(0),
+    d_prev_cpu_system(0),
+    d_prev_cpu_idle(0),
+    d_cpu_usage(0.0f),
+    d_prev_disk_read(0),
+    d_prev_disk_write(0),
+    d_last_diskio_time_ms(0),
+    d_disk_read_rate(0.0f),
+    d_disk_write_rate(0.0f),
+    d_main_gain_linear(1.0f),
+    center_zoom_state(0),
+    center_zoom_tuner_id(-1),
+    center_zoom_original_span(0)
 {
     ui->setupUi(this);
     BandPlan::create();
@@ -105,14 +136,74 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     d_show_markers = true;
 
     /* frequency control widget */
-    ui->freqCtrl->setup(0, 0, 9999e6, 1, FCTL_UNIT_NONE);
+    ui->freqCtrl->setup(0, 0, 9999e6, 1, FCTL_UNIT_HZ);
     ui->freqCtrl->setFrequency(144500000);
+    // Style to match SPAN/L/R labels: #fc9 (light orange)
+    ui->freqCtrl->setDigitColor(QColor(0xFF, 0xCC, 0x99));      // Light orange for digits
+    ui->freqCtrl->setBgColor(QColor(0x3A, 0x3A, 0x3A));         // Gray background per digit
+    ui->freqCtrl->setUnitsColor(QColor(0xFF, 0xCC, 0x99));      // Light orange for "Hz"
+    ui->freqCtrl->setHighlightColor(QColor(0x5A, 0x5A, 0x5A));  // Slightly lighter for hover
 
     d_filter_shape = receiver::FILTER_SHAPE_NORMAL;
 
     /* create receiver object */
     rx = new receiver("", "", 1);
-    rx->set_rf_freq(144500000.0);
+
+    /* create multi-tuner manager */
+    tuner_manager = std::make_shared<TunerManager>();
+
+    /* create tuner list dock widget */
+    tuner_list_widget = new TunerList(this);
+    tuner_list_widget->set_tuner_manager(tuner_manager.get());
+    uiDockTunerList = new QDockWidget("Tuner Manager", this);
+    uiDockTunerList->setObjectName("DockTunerList");
+    uiDockTunerList->setWidget(tuner_list_widget);
+    connect(tuner_list_widget, &TunerList::tuner_add_requested, this, &MainWindow::addTuner);
+    connect(tuner_list_widget, &TunerList::tuner_add_requested_with_type, this, &MainWindow::addTunerWithType);
+    connect(tuner_list_widget, &TunerList::tuner_remove_requested, this, &MainWindow::onTunerRemoved);
+    connect(tuner_list_widget, &TunerList::tuner_type_changed, this, &MainWindow::onTunerTypeChanged);
+    connect(tuner_list_widget, &TunerList::tuner_enabled_changed, this, &MainWindow::onTunerEnabledChanged);
+    connect(tuner_list_widget, &TunerList::tuner_name_changed, this, &MainWindow::onTunerNameChanged);
+    connect(tuner_list_widget, &TunerList::tuner_color_changed, this, &MainWindow::onTunerColorChanged);
+    connect(tuner_list_widget, &TunerList::tuner_alpha_changed, this, &MainWindow::onTunerAlphaChanged);
+    connect(tuner_list_widget, &TunerList::tuner_volume_changed, this, &MainWindow::onTunerVolumeChanged);
+    connect(tuner_list_widget, &TunerList::tuner_mute_toggled, this, &MainWindow::onTunerMuteToggled);
+    connect(tuner_list_widget, &TunerList::tuner_recording_toggled, this, &MainWindow::onTunerRecordingToggled);
+    connect(tuner_list_widget, &TunerList::tuner_center_requested, this, &MainWindow::onTunerCenterRequested);
+    connect(tuner_list_widget, &TunerList::tuner_zoom_requested, this, &MainWindow::onTunerZoomRequested);
+    connect(tuner_list_widget, &TunerList::tuner_frequency_changed, this, &MainWindow::onTunerFrequencyChanged);
+    connect(tuner_list_widget, &TunerList::tuner_filter_width_changed, this, &MainWindow::onTunerFilterWidthChanged);
+    connect(tuner_list_widget, &TunerList::tuner_squelch_changed, this, &MainWindow::onTunerSquelchChanged);
+    connect(tuner_list_widget, &TunerList::tuner_auto_squelch_requested, this, &MainWindow::onTunerAutoSquelchRequested);
+    connect(tuner_list_widget, &TunerList::tuner_filter_preset_changed, this, &MainWindow::onTunerFilterPresetChanged);
+    connect(tuner_list_widget, &TunerList::tuner_agc_preset_changed, this, &MainWindow::onTunerAgcPresetChanged);
+    connect(tuner_list_widget, &TunerList::tuner_nb_state_changed, this, &MainWindow::onTunerNbStateChanged);
+    connect(tuner_list_widget, &TunerList::tuner_filter_shape_changed, this, &MainWindow::onTunerFilterShapeChanged);
+    connect(tuner_list_widget, &TunerList::tuner_nb1_threshold_changed, this, &MainWindow::onTunerNb1ThresholdChanged);
+    connect(tuner_list_widget, &TunerList::tuner_nb2_threshold_changed, this, &MainWindow::onTunerNb2ThresholdChanged);
+    connect(tuner_list_widget, &TunerList::tuner_agc_hang_changed, this, &MainWindow::onTunerAgcHangChanged);
+    connect(tuner_list_widget, &TunerList::tuner_agc_threshold_changed, this, &MainWindow::onTunerAgcThresholdChanged);
+    connect(tuner_list_widget, &TunerList::tuner_agc_decay_changed, this, &MainWindow::onTunerAgcDecayChanged);
+    connect(tuner_list_widget, &TunerList::tuner_agc_gain_changed, this, &MainWindow::onTunerAgcGainChanged);
+    if (tuner_manager)
+        tuner_manager->set_rf_freq(144500000.0);
+
+    if (tuner_manager) {
+        TunerList* list_widget = tuner_list_widget;
+
+        tuner_manager->on_channel_created([list_widget](channel_id id) {
+            if (list_widget) {
+                QMetaObject::invokeMethod(list_widget, "refresh_tuner_list", Qt::QueuedConnection);
+            }
+        });
+
+        tuner_manager->on_channel_destroyed([list_widget](channel_id id) {
+            if (list_widget) {
+                QMetaObject::invokeMethod(list_widget, "refresh_tuner_list", Qt::QueuedConnection);
+            }
+        });
+
+    }
 
     // remote controller
     remote = new RemoteControl();
@@ -146,6 +237,8 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
 
     /* create dock widgets */
     uiDockRxOpt = new DockRxOpt();
+    uiDockRxOpt->setTunerManager(tuner_manager.get());
+    uiDockRxOpt->hide();  // Per-tuner docks used instead
     uiDockRDS = new DockRDS();
     uiDockAudio = new DockAudio();
     uiDockInputCtl = new DockInputCtl();
@@ -155,9 +248,10 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     BandPlan::Get().load();
     uiDockBookmarks = new DockBookmarks(this);
 
+    remote->setTunerManager(tuner_manager);
+
     // setup some toggle view shortcuts
     uiDockInputCtl->toggleViewAction()->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_J));
-    uiDockRxOpt->toggleViewAction()->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
     uiDockFft->toggleViewAction()->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_F));
     uiDockAudio->toggleViewAction()->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_A));
     uiDockBookmarks->toggleViewAction()->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_B));
@@ -188,11 +282,9 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
        docked to the mainwindow.
     */
     addDockWidget(Qt::RightDockWidgetArea, uiDockInputCtl);
-    addDockWidget(Qt::RightDockWidgetArea, uiDockRxOpt);
     addDockWidget(Qt::RightDockWidgetArea, uiDockFft);
-    tabifyDockWidget(uiDockInputCtl, uiDockRxOpt);
-    tabifyDockWidget(uiDockRxOpt, uiDockFft);
-    uiDockRxOpt->raise();
+    tabifyDockWidget(uiDockInputCtl, uiDockFft);
+    uiDockFft->raise();
 
     addDockWidget(Qt::RightDockWidgetArea, uiDockAudio);
     addDockWidget(Qt::RightDockWidgetArea, uiDockRDS);
@@ -200,6 +292,7 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     uiDockAudio->raise();
 
     addDockWidget(Qt::BottomDockWidgetArea, uiDockBookmarks);
+    addDockWidget(Qt::LeftDockWidgetArea, uiDockTunerList);
 
     /* hide docks that we don't want to show initially */
     uiDockBookmarks->hide();
@@ -209,11 +302,11 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
        connections will be established automagially.
     */
     ui->menu_View->addAction(uiDockInputCtl->toggleViewAction());
-    ui->menu_View->addAction(uiDockRxOpt->toggleViewAction());
     ui->menu_View->addAction(uiDockRDS->toggleViewAction());
     ui->menu_View->addAction(uiDockAudio->toggleViewAction());
     ui->menu_View->addAction(uiDockFft->toggleViewAction());
     ui->menu_View->addAction(uiDockBookmarks->toggleViewAction());
+    ui->menu_View->addAction(uiDockTunerList->toggleViewAction());
     ui->menu_View->addSeparator();
     ui->menu_View->addAction(ui->mainToolBar->toggleViewAction());
     ui->menu_View->addSeparator();
@@ -256,7 +349,7 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     connect(uiDockRxOpt, SIGNAL(agcDecayChanged(int)), this, SLOT(setAgcDecay(int)));
     connect(uiDockRxOpt, SIGNAL(noiseBlankerChanged(int,bool,float)), this, SLOT(setNoiseBlanker(int,bool,float)));
     connect(uiDockRxOpt, SIGNAL(sqlLevelChanged(double)), this, SLOT(setSqlLevel(double)));
-    connect(uiDockRxOpt, SIGNAL(sqlAutoClicked()), this, SLOT(setSqlLevelAuto()));
+    connect(uiDockRxOpt, &DockRxOpt::sqlAutoClicked, this, &MainWindow::setSqlLevelAuto);
     connect(uiDockAudio, SIGNAL(audioGainChanged(float)), this, SLOT(setAudioGain(float)));
     connect(uiDockAudio, SIGNAL(audioGainChanged(float)), remote, SLOT(setAudioGain(float)));
     connect(uiDockAudio, SIGNAL(audioStreamingStarted(QString,int,bool)), this, SLOT(startAudioStream(QString,int,bool)));
@@ -305,9 +398,34 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
             uiDockFft, SLOT(setPandapterRange(float,float)));
     connect(ui->plotter, SIGNAL(newZoomLevel(float)),
             uiDockFft, SLOT(setZoomLevel(float)));
+    connect(ui->plotter, &CPlotter::newZoomLevel, this, [this](float) {
+        // Update the span label when zoom level changes
+        qint64 span_freq = ui->plotter->getSpan();
+        QString span_text;
+        if (span_freq >= 1e6) {
+            span_text = QString("SPAN: %1 MHz").arg((double)span_freq / 1e6, 0, 'f', 2);
+        } else if (span_freq >= 1e3) {
+            span_text = QString("SPAN: %1 kHz").arg((double)span_freq / 1e3, 0, 'f', 0);
+        } else {
+            span_text = QString("SPAN: %1 Hz").arg(span_freq);
+        }
+        ui->fftSpanLabel->setText(span_text);
+
+        // Update edge frequency labels
+        qint64 center_freq = ui->freqCtrl->getFrequency();
+        qint64 left_edge = center_freq - span_freq / 2;
+        qint64 right_edge = center_freq + span_freq / 2;
+
+        ui->fftLeftEdgeLabel->setText(QString("L: %1 MHz").arg((double)left_edge / 1e6, 0, 'f', 3));
+        ui->fftRightEdgeLabel->setText(QString("R: %1 MHz").arg((double)right_edge / 1e6, 0, 'f', 3));
+    });
     connect(ui->plotter, SIGNAL(newSize()), this, SLOT(setWfSize()));
     connect(ui->plotter, SIGNAL(markerSelectA(qint64)), this, SLOT(setMarkerA(qint64)));
     connect(ui->plotter, SIGNAL(markerSelectB(qint64)), this, SLOT(setMarkerB(qint64)));
+    connect(ui->plotter, SIGNAL(tuneToFrequency(int, qint64)), this, SLOT(onTunerDragged(int, qint64)));
+    connect(ui->plotter, SIGNAL(filterResized(int, int, int)), this, SLOT(onFilterResized(int, int, int)));
+    connect(ui->plotter, SIGNAL(panSdrFrequency(int,qint64)), this, SLOT(onPanSdrFrequency(int,qint64)));
+    connect(ui->plotter, SIGNAL(newCenterFreqRequest(qint64)), this, SLOT(setNewFrequency(qint64)));
 
     // Bookmarks
     connect(uiDockBookmarks, SIGNAL(newBookmarkActivated(qint64, QString, int)), this, SLOT(onBookmarkActivated(qint64, QString, int)));
@@ -396,6 +514,11 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
         }
     }
 
+    // Load saved tuner list (shows tuners before DSP starts)
+    if (tuner_list_widget && m_settings) {
+        tuner_list_widget->load_from_settings(m_settings);
+    }
+
     qsvg_dummy = new QSvgWidget();
 }
 
@@ -471,7 +594,8 @@ MainWindow::~MainWindow()
 bool MainWindow::loadConfig(const QString& cfgfile, bool check_crash,
                             bool restore_mainwindow)
 {
-    double      actual_rate;
+
+    double      actual_rate = 0.0;
     qint64      int64_val;
     int         int_val;
     bool        bool_val;
@@ -543,12 +667,16 @@ bool MainWindow::loadConfig(const QString& cfgfile, bool check_crash,
     }
 
     QString indev = m_settings->value("input/device", "").toString();
-    if (!indev.isEmpty())
+    if (!indev.isEmpty() && tuner_manager)
     {
         try
         {
-            rx->set_input_device(indev.toStdString());
-            conf_ok = true;
+            auto status = tuner_manager->set_input_device(indev.toStdString());
+            if (status == TunerManager::STATUS_OK) {
+                conf_ok = true;
+            } else {
+                throw std::runtime_error("TunerManager::set_input_device failed");
+            }
         }
         catch (std::runtime_error &x)
         {
@@ -564,7 +692,7 @@ bool MainWindow::loadConfig(const QString& cfgfile, bool check_crash,
         setWindowTitle(QString("Gqrx %1 - %2").arg(VERSION).arg(indev));
 
         // Add available antenna connectors to the UI
-        std::vector<std::string> antennas = rx->get_antennas();
+        std::vector<std::string> antennas = tuner_manager->get_antennas();
         uiDockInputCtl->setAntennas(antennas);
 
         // Update gain stages.
@@ -595,9 +723,10 @@ bool MainWindow::loadConfig(const QString& cfgfile, bool check_crash,
     }
 
     int_val = m_settings->value("input/sample_rate", 0).toInt(&conv_ok);
-    if (conv_ok && (int_val > 0))
+    if (conv_ok && (int_val > 0) && tuner_manager)
     {
-        actual_rate = rx->set_input_rate(int_val);
+        tuner_manager->set_input_rate(int_val);
+        actual_rate = tuner_manager->get_input_rate();
 
         if (actual_rate == 0)
         {
@@ -619,18 +748,21 @@ bool MainWindow::loadConfig(const QString& cfgfile, bool check_crash,
         qDebug() << "Requested sample rate:" << int_val;
         qDebug() << "Actual sample rate   :" << QString("%1").arg(actual_rate, 0, 'f', 6);
     }
-    else
-        actual_rate = rx->get_input_rate();
+    else if (tuner_manager)
+    {
+        actual_rate = tuner_manager->get_input_rate();
+    }
 
-    if (actual_rate > 0.)
+    if (actual_rate > 0. && tuner_manager)
     {
         int_val = m_settings->value("input/decimation", 1).toInt(&conv_ok);
         if (conv_ok && int_val >= 2)
         {
-            if (rx->set_input_decim(int_val) != (unsigned int)int_val)
+            tuner_manager->set_input_decim(int_val);
+            unsigned int actual_decim = tuner_manager->get_input_decim();
+            if (actual_decim != (unsigned int)int_val)
             {
                 qDebug() << "Failed to set decimation" << int_val;
-                qDebug() << "  actual decimation:" << rx->get_input_decim();
             }
             else
             {
@@ -641,7 +773,9 @@ bool MainWindow::loadConfig(const QString& cfgfile, bool check_crash,
             }
         }
         else
-            rx->set_input_decim(1);
+        {
+            tuner_manager->set_input_decim(1);
+        }
 
         // update various widgets that need a sample rate
         uiDockRxOpt->setFilterOffsetRange((qint64)(actual_rate));
@@ -650,9 +784,12 @@ bool MainWindow::loadConfig(const QString& cfgfile, bool check_crash,
         ui->plotter->setSpanFreq((quint32)actual_rate);
         remote->setBandwidth((qint64)actual_rate);
         iq_tool->setSampleRate((qint64)actual_rate);
+        updateSourceStatusLabels();
     }
     else
+    {
         qDebug() << "Error: Actual sample rate is" << actual_rate;
+    }
 
     int64_val = m_settings->value("input/bandwidth", 0).toInt(&conv_ok);
     if (conv_ok)
@@ -807,6 +944,64 @@ void MainWindow::storeSession()
                 m_settings->setValue("receiver/filter_high_cut", fhi);
             }
         }
+
+        // Save tuner state so we can restore on next launch
+        if (tuner_manager) {
+            std::vector<channel_id> tuner_ids = tuner_manager->get_all_channels();
+            m_settings->setValue("tuner/count", (int)tuner_ids.size());
+
+            // Clear old tuner settings
+            m_settings->beginGroup("tuners");
+            m_settings->remove("");  // Remove all keys in this group
+            m_settings->endGroup();
+
+            // Save each tuner's state
+            for (size_t i = 0; i < tuner_ids.size(); i++) {
+                channel_id id = tuner_ids[i];
+                ReceiverChannel* tuner = tuner_manager->get_channel_impl(id);
+                if (tuner) {
+                    QString prefix = QString("tuners/%1/").arg(i);
+
+                    // Basic tuner settings
+                    m_settings->setValue(prefix + "name", QString::fromStdString(tuner->get_channel_name()));
+                    m_settings->setValue(prefix + "freq_offset", tuner->get_center_freq());
+                    m_settings->setValue(prefix + "demod", (int)tuner->get_demod());
+                    m_settings->setValue(prefix + "receiver_type", static_cast<int>(tuner->get_backend_type()));
+                    m_settings->setValue(prefix + "squelch", tuner->get_sql_level());
+                    m_settings->setValue(prefix + "audio_gain", tuner->get_audio_gain());
+                    m_settings->setValue(prefix + "filter_offset", tuner->get_filter_offset());
+                    m_settings->setValue(prefix + "enabled", tuner->is_enabled());
+
+                    // Save filter bounds from the plotter marker
+                    MultiTunerPlotter::TunerMarker marker = ui->plotter->getTunerMarker(id);
+                    if (marker.tuner_id >= 0) {
+                        m_settings->setValue(prefix + "filter_low", marker.filter_low);
+                        m_settings->setValue(prefix + "filter_high", marker.filter_high);
+                    }
+
+                    // Save color, volume, and mute state from tuner list widget
+                    if (tuner_list_widget) {
+                        for (auto* child : tuner_list_widget->findChildren<TunerRowWidget*>()) {
+                            if (child->tuner_id() == id) {
+                                m_settings->setValue(prefix + "color", child->color().name());
+                                m_settings->setValue(prefix + "volume", child->volume());
+                                m_settings->setValue(prefix + "muted", child->isMuted());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Save active tuner index
+            channel_id active_id = tuner_manager->get_active_channel();
+            for (size_t i = 0; i < tuner_ids.size(); i++) {
+                if (tuner_ids[i] == active_id) {
+                    m_settings->setValue("tuner/active_index", (int)i);
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -857,8 +1052,343 @@ void MainWindow::updateFrequencyRange()
     auto start = (qint64)(rx->get_filter_offset()) + d_hw_freq_start + d_lnb_lo;
     auto stop  = (qint64)(rx->get_filter_offset()) + d_hw_freq_stop  + d_lnb_lo;
 
-    ui->freqCtrl->setup(0, start, stop, 1, FCTL_UNIT_NONE);
+    ui->freqCtrl->setup(0, start, stop, 1, FCTL_UNIT_HZ);
     uiDockRxOpt->setRxFreqRange(start, stop);
+}
+
+/**
+ * @brief Update source status labels (source type, sample rate, decimation, bandwidth, span, LNB LO).
+ */
+void MainWindow::updateSourceStatusLabels()
+{
+
+    if (!tuner_manager) {
+        ui->sourceStatusLabel->setText("INPUT: None");
+        ui->sampleRateLabel->setText("RATE: 0.00 MSPS");
+        ui->decimBwLabel->setText("BW: 0.00 MHz");
+        ui->fftSpanLabel->setText("SPAN: 0.00 MHz");
+        ui->lnbLoLabel->setText("");
+        return;
+    }
+
+    // Get the input device string to determine source type
+    QString device_str = QString::fromStdString(tuner_manager->get_input_device());
+    QString source_type;
+
+    if (device_str.contains("file=", Qt::CaseInsensitive)) {
+        source_type = "IQ File";
+    } else if (device_str.contains("uhd", Qt::CaseInsensitive) ||
+               device_str.contains("usrp", Qt::CaseInsensitive)) {
+        source_type = "USRP";
+    } else if (device_str.contains("rtl", Qt::CaseInsensitive)) {
+        source_type = "RTL-SDR";
+    } else if (device_str.contains("soapy", Qt::CaseInsensitive)) {
+        source_type = "SoapySDR";
+    } else if (device_str.contains("hackrf", Qt::CaseInsensitive)) {
+        source_type = "HackRF";
+    } else if (device_str.contains("airspy", Qt::CaseInsensitive)) {
+        source_type = "Airspy";
+    } else if (device_str.contains("bladerf", Qt::CaseInsensitive)) {
+        source_type = "BladeRF";
+    } else if (device_str.isEmpty()) {
+        source_type = "None";
+    } else {
+        source_type = "SDR";
+    }
+
+    ui->sourceStatusLabel->setText(QString("INPUT: %1").arg(source_type));
+
+    // Get sample rate (raw input from SDR)
+    double sample_rate = tuner_manager->get_input_rate();
+    QString rate_text;
+    if (sample_rate >= 1e6) {
+        rate_text = QString("RATE: %1 MSPS").arg(sample_rate / 1e6, 0, 'f', 2);
+    } else if (sample_rate >= 1e3) {
+        rate_text = QString("RATE: %1 kSPS").arg(sample_rate / 1e3, 0, 'f', 0);
+    } else {
+        rate_text = QString("RATE: %1 SPS").arg(sample_rate, 0, 'f', 0);
+    }
+    ui->sampleRateLabel->setText(rate_text);
+
+    // Get decimation and effective bandwidth (quad rate)
+    unsigned int decim = tuner_manager->get_input_decim();
+    double quad_rate = tuner_manager->get_quad_rate();  // Effective bandwidth after decimation
+    QString decim_bw_text;
+    if (decim > 1) {
+        // Show decimation and bandwidth
+        if (quad_rate >= 1e6) {
+            decim_bw_text = QString("BW: %1 MHz (1/%2)").arg(quad_rate / 1e6, 0, 'f', 2).arg(decim);
+        } else if (quad_rate >= 1e3) {
+            decim_bw_text = QString("BW: %1 kHz (1/%2)").arg(quad_rate / 1e3, 0, 'f', 0).arg(decim);
+        } else {
+            decim_bw_text = QString("BW: %1 Hz (1/%2)").arg(quad_rate, 0, 'f', 0).arg(decim);
+        }
+    } else {
+        // No decimation - just show bandwidth (same as sample rate)
+        if (quad_rate >= 1e6) {
+            decim_bw_text = QString("BW: %1 MHz").arg(quad_rate / 1e6, 0, 'f', 2);
+        } else if (quad_rate >= 1e3) {
+            decim_bw_text = QString("BW: %1 kHz").arg(quad_rate / 1e3, 0, 'f', 0);
+        } else {
+            decim_bw_text = QString("BW: %1 Hz").arg(quad_rate, 0, 'f', 0);
+        }
+    }
+    ui->decimBwLabel->setText(decim_bw_text);
+
+    // Get FFT span from plotter
+    qint64 span_freq = ui->plotter->getSpan();
+    QString span_text;
+    if (span_freq >= 1e6) {
+        span_text = QString("SPAN: %1 MHz").arg((double)span_freq / 1e6, 0, 'f', 2);
+    } else if (span_freq >= 1e3) {
+        span_text = QString("SPAN: %1 kHz").arg((double)span_freq / 1e3, 0, 'f', 0);
+    } else {
+        span_text = QString("SPAN: %1 Hz").arg(span_freq);
+    }
+    ui->fftSpanLabel->setText(span_text);
+
+    // Update edge frequency labels
+    qint64 center_freq = ui->freqCtrl->getFrequency();
+    qint64 left_edge = center_freq - span_freq / 2;
+    qint64 right_edge = center_freq + span_freq / 2;
+
+    ui->fftLeftEdgeLabel->setText(QString("L: %1 MHz").arg((double)left_edge / 1e6, 0, 'f', 3));
+    ui->fftRightEdgeLabel->setText(QString("R: %1 MHz").arg((double)right_edge / 1e6, 0, 'f', 3));
+
+    // Get LNB LO (only show if non-zero)
+    if (d_lnb_lo != 0) {
+        QString lnb_text;
+        double lnb_mhz = (double)d_lnb_lo / 1e6;
+        if (lnb_mhz >= 0) {
+            lnb_text = QString("LNB LO: +%1 MHz").arg(lnb_mhz, 0, 'f', 2);
+        } else {
+            lnb_text = QString("LNB LO: %1 MHz").arg(lnb_mhz, 0, 'f', 2);
+        }
+        ui->lnbLoLabel->setText(lnb_text);
+        ui->lnbLoLabel->setVisible(true);
+    } else {
+        ui->lnbLoLabel->setText("");
+        ui->lnbLoLabel->setVisible(false);
+    }
+}
+
+/**
+ * @brief Get current CPU usage percentage.
+ * @return CPU usage as percentage (0-100).
+ */
+float MainWindow::getCpuUsage()
+{
+#ifdef __APPLE__
+    host_cpu_load_info_data_t cpuinfo;
+    mach_msg_type_number_t count = HOST_CPU_LOAD_INFO_COUNT;
+
+    if (host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO,
+                        (host_info_t)&cpuinfo, &count) == KERN_SUCCESS) {
+        quint64 user = cpuinfo.cpu_ticks[CPU_STATE_USER];
+        quint64 system = cpuinfo.cpu_ticks[CPU_STATE_SYSTEM];
+        quint64 idle = cpuinfo.cpu_ticks[CPU_STATE_IDLE];
+        quint64 nice = cpuinfo.cpu_ticks[CPU_STATE_NICE];
+
+        quint64 total_user = user + nice;
+        quint64 total_idle = idle;
+        quint64 total_system = system;
+
+        // Calculate deltas
+        quint64 delta_user = total_user - d_prev_cpu_user;
+        quint64 delta_system = total_system - d_prev_cpu_system;
+        quint64 delta_idle = total_idle - d_prev_cpu_idle;
+        quint64 total = delta_user + delta_system + delta_idle;
+
+        // Store for next iteration
+        d_prev_cpu_user = total_user;
+        d_prev_cpu_system = total_system;
+        d_prev_cpu_idle = total_idle;
+
+        if (total > 0) {
+            d_cpu_usage = 100.0f * (float)(delta_user + delta_system) / (float)total;
+        }
+    }
+#elif defined(__linux__)
+    std::ifstream stat_file("/proc/stat");
+    if (stat_file.is_open()) {
+        std::string line;
+        std::getline(stat_file, line);
+        // Parse: cpu user nice system idle iowait irq softirq
+        quint64 user, nice, system, idle, iowait, irq, softirq;
+        if (sscanf(line.c_str(), "cpu %llu %llu %llu %llu %llu %llu %llu",
+                   &user, &nice, &system, &idle, &iowait, &irq, &softirq) >= 4) {
+            quint64 total_user = user + nice;
+            quint64 total_system = system + irq + softirq;
+            quint64 total_idle = idle + iowait;
+
+            quint64 delta_user = total_user - d_prev_cpu_user;
+            quint64 delta_system = total_system - d_prev_cpu_system;
+            quint64 delta_idle = total_idle - d_prev_cpu_idle;
+            quint64 total = delta_user + delta_system + delta_idle;
+
+            d_prev_cpu_user = total_user;
+            d_prev_cpu_system = total_system;
+            d_prev_cpu_idle = total_idle;
+
+            if (total > 0) {
+                d_cpu_usage = 100.0f * (float)(delta_user + delta_system) / (float)total;
+            }
+        }
+    }
+#endif
+    return d_cpu_usage;
+}
+
+/**
+ * @brief Update left-side stats display (CPU, FFT rate, DSP status, tuners).
+ */
+void MainWindow::updateLeftStats()
+{
+    // Update CPU usage
+    float cpu = getCpuUsage();
+    QString cpu_text = QString("CPU: %1%").arg(cpu, 0, 'f', 0);
+    ui->cpuUsageLabel->setText(cpu_text);
+
+    // Color based on CPU usage
+    if (cpu < 50) {
+        ui->cpuUsageLabel->setStyleSheet("QLabel { color: #6c6; font-size: 10px; font-weight: bold; }");  // Green
+    } else if (cpu < 80) {
+        ui->cpuUsageLabel->setStyleSheet("QLabel { color: #cc6; font-size: 10px; font-weight: bold; }");  // Yellow
+    } else {
+        ui->cpuUsageLabel->setStyleSheet("QLabel { color: #c66; font-size: 10px; font-weight: bold; }");  // Red
+    }
+
+    // Update FFT rate
+    QString fft_text = QString("FFT: %1 fps").arg(d_avg_fft_rate, 0, 'f', 1);
+    ui->fftRateLabel->setText(fft_text);
+
+    // Update DSP status
+    bool dsp_running = ui->actionDSP->isChecked();
+    if (dsp_running) {
+        ui->dspStatusLabel->setText("DSP: Running");
+        ui->dspStatusLabel->setStyleSheet("QLabel { color: #6c6; font-size: 10px; font-weight: bold; }");  // Green
+    } else {
+        ui->dspStatusLabel->setText("DSP: Stopped");
+        ui->dspStatusLabel->setStyleSheet("QLabel { color: #c66; font-size: 10px; font-weight: bold; }");  // Red
+    }
+
+    // Update tuner count
+    if (tuner_manager) {
+        auto channels = tuner_manager->get_all_channels();
+        int total = channels.size();
+        int active = 0;
+        for (int ch_id : channels) {
+            auto* channel = tuner_manager->get_channel_impl(ch_id);
+            if (channel && channel->is_enabled() && !channel->is_bypassed()) {
+                active++;
+            }
+        }
+        QString tuners_text = QString("Tuners: %1/%2").arg(active).arg(total);
+        ui->tunersActiveLabel->setText(tuners_text);
+    } else {
+        ui->tunersActiveLabel->setText("Tuners: 0/0");
+    }
+
+    // Get actual disk I/O from the OS (gqrx process only)
+    quint64 current_read = 0;
+    quint64 current_write = 0;
+    quint64 current_time_ms = QDateTime::currentMSecsSinceEpoch();
+
+#ifdef __APPLE__
+    // macOS: use proc_pid_rusage for actual disk I/O
+    struct rusage_info_v3 rusage;
+    if (proc_pid_rusage(getpid(), RUSAGE_INFO_V3, (void**)&rusage) == 0) {
+        current_read = rusage.ri_diskio_bytesread;
+        current_write = rusage.ri_diskio_byteswritten;
+    }
+#elif defined(__linux__)
+    // Linux: read from /proc/self/io
+    std::ifstream io_file("/proc/self/io");
+    if (io_file.is_open()) {
+        std::string line;
+        while (std::getline(io_file, line)) {
+            if (line.find("read_bytes:") == 0) {
+                current_read = std::stoull(line.substr(12));
+            } else if (line.find("write_bytes:") == 0) {
+                current_write = std::stoull(line.substr(13));
+            }
+        }
+    }
+#endif
+
+    // Calculate rates (bytes per second) with exponential moving average smoothing
+    // EMA smoothing factor: 0.1 = very smooth, 0.2 = smooth, 0.5 = moderate, 0.8 = responsive
+    const float ema_alpha = 0.15f;
+
+    if (d_last_diskio_time_ms > 0) {
+        double elapsed_sec = (current_time_ms - d_last_diskio_time_ms) / 1000.0;
+        if (elapsed_sec > 0.01) {  // Avoid division by very small numbers
+            float instant_read_rate = (float)(current_read - d_prev_disk_read) / elapsed_sec;
+            float instant_write_rate = (float)(current_write - d_prev_disk_write) / elapsed_sec;
+
+            // Apply EMA smoothing to reduce bursty fluctuations
+            d_disk_read_rate = ema_alpha * instant_read_rate + (1.0f - ema_alpha) * d_disk_read_rate;
+            d_disk_write_rate = ema_alpha * instant_write_rate + (1.0f - ema_alpha) * d_disk_write_rate;
+        }
+    }
+
+    d_prev_disk_read = current_read;
+    d_prev_disk_write = current_write;
+    d_last_diskio_time_ms = current_time_ms;
+
+    // Only update disk labels every 5 calls (~1 second) to make them readable
+    static int disk_update_counter = 0;
+    disk_update_counter++;
+    if (disk_update_counter < 5) {
+        return;  // Skip display update, but keep calculating rates above
+    }
+    disk_update_counter = 0;
+
+    // Update disk READ label - integer values only
+    int read_mb_per_sec = (int)(d_disk_read_rate / (1024.0 * 1024.0));
+    int read_kb_per_sec = (int)(d_disk_read_rate / 1024.0);
+    QString read_text;
+    if (read_mb_per_sec >= 1) {
+        read_text = QString("Disk R: %1 MB/s").arg(read_mb_per_sec);
+    } else if (read_kb_per_sec >= 1) {
+        read_text = QString("Disk R: %1 KB/s").arg(read_kb_per_sec);
+    } else {
+        read_text = QString("Disk R: 0");
+    }
+    ui->diskReadLabel->setText(read_text);
+    // Color based on read rate
+    if (read_mb_per_sec < 1 && read_kb_per_sec < 1) {
+        ui->diskReadLabel->setStyleSheet("QLabel { color: #555; font-size: 10px; font-weight: bold; }");  // Dim when idle
+    } else if (read_mb_per_sec < 10) {
+        ui->diskReadLabel->setStyleSheet("QLabel { color: #6c6; font-size: 10px; font-weight: bold; }");  // Green
+    } else if (read_mb_per_sec < 50) {
+        ui->diskReadLabel->setStyleSheet("QLabel { color: #cc6; font-size: 10px; font-weight: bold; }");  // Yellow
+    } else {
+        ui->diskReadLabel->setStyleSheet("QLabel { color: #c66; font-size: 10px; font-weight: bold; }");  // Red
+    }
+
+    // Update disk WRITE label - integer values only
+    int write_mb_per_sec = (int)(d_disk_write_rate / (1024.0 * 1024.0));
+    int write_kb_per_sec = (int)(d_disk_write_rate / 1024.0);
+    QString write_text;
+    if (write_mb_per_sec >= 1) {
+        write_text = QString("Disk W: %1 MB/s").arg(write_mb_per_sec);
+    } else if (write_kb_per_sec >= 1) {
+        write_text = QString("Disk W: %1 KB/s").arg(write_kb_per_sec);
+    } else {
+        write_text = QString("Disk W: 0");
+    }
+    ui->diskWriteLabel->setText(write_text);
+    // Color based on write rate
+    if (write_mb_per_sec < 1 && write_kb_per_sec < 1) {
+        ui->diskWriteLabel->setStyleSheet("QLabel { color: #555; font-size: 10px; font-weight: bold; }");  // Dim when idle
+    } else if (write_mb_per_sec < 10) {
+        ui->diskWriteLabel->setStyleSheet("QLabel { color: #6c6; font-size: 10px; font-weight: bold; }");  // Green
+    } else if (write_mb_per_sec < 50) {
+        ui->diskWriteLabel->setStyleSheet("QLabel { color: #cc6; font-size: 10px; font-weight: bold; }");  // Yellow
+    } else {
+        ui->diskWriteLabel->setStyleSheet("QLabel { color: #c66; font-size: 10px; font-weight: bold; }");  // Red
+    }
 }
 
 /**
@@ -871,23 +1401,26 @@ void MainWindow::updateFrequencyRange()
  */
 void MainWindow::updateGainStages(bool read_from_device)
 {
+    if (!tuner_manager)
+        return;
+
     gain_list_t gain_list;
-    std::vector<std::string> gain_names = rx->get_gain_names();
+    std::vector<std::string> gain_names = tuner_manager->get_gain_names();
     gain_t gain;
 
     std::vector<std::string>::iterator it;
     for (it = gain_names.begin(); it != gain_names.end(); ++it)
     {
         gain.name = *it;
-        rx->get_gain_range(gain.name, &gain.start, &gain.stop, &gain.step);
+        tuner_manager->get_gain_range(gain.name, &gain.start, &gain.stop, &gain.step);
         if (read_from_device)
         {
-            gain.value = rx->get_gain(gain.name);
+            gain.value = tuner_manager->get_gain(gain.name);
         }
         else
         {
             gain.value = (gain.start + gain.stop) / 2;
-            rx->set_gain(gain.name, gain.value);
+            tuner_manager->set_gain(gain.name, gain.value);
         }
         gain_list.push_back(gain);
     }
@@ -901,21 +1434,94 @@ void MainWindow::updateGainStages(bool read_from_device)
  * @param[in] freq The new frequency.
  *
  * This slot is connected to the CFreqCtrl::newFrequency() signal and is used
- * to set new receive frequency.
+ * to set the SDR center frequency.
+ *
+ * In multi-tuner mode, this changes the SDR center frequency.
+ * ALL channelized tuners stay at their absolute frequencies - their DDC offsets
+ * are recalculated to compensate for the RF shift.
  */
 void MainWindow::setNewFrequency(qint64 rx_freq)
 {
-    auto hw_freq = (double)(rx_freq - d_lnb_lo) - rx->get_filter_offset();
-    auto center_freq = rx_freq - (qint64)rx->get_filter_offset();
+    if (!tuner_manager) {
+        return;
+    }
 
-    d_hw_freq = (qint64)hw_freq;
+    // Get current RF frequency to calculate the shift
+    qint64 old_rf_freq = tuner_manager->get_rf_freq();
+    qint64 new_rf_freq = rx_freq - d_lnb_lo;
 
-    // set receiver frequency
-    rx->set_rf_freq(hw_freq);
+    // Set the new SDR center frequency
+    d_hw_freq = new_rf_freq;
+    tuner_manager->set_rf_freq((double)new_rf_freq);
 
-    // update widgets
-    ui->plotter->setCenterFreq(center_freq);
+    // Update plotter center
+    ui->plotter->setCenterFreq(rx_freq);
     uiDockRxOpt->setHwFreq(d_hw_freq);
+
+    // Recalculate ALL tuners' DDC offsets so their absolute frequencies stay the same
+    // Also bypass tuners that fall outside the valid bandwidth (saves CPU)
+    double sample_rate = tuner_manager->get_input_rate();
+    qint64 max_offset = (qint64)(sample_rate / 2.0 * 0.95);  // 95% of half sample rate
+
+    auto all_ids = tuner_manager->get_all_channels();
+    for (channel_id id : all_ids) {
+        auto* tuner = tuner_manager->get_channel_impl(id);
+        if (tuner) {
+            // Get this tuner's current absolute frequency
+            qint64 tuner_abs_freq = old_rf_freq + d_lnb_lo + (qint64)tuner->get_center_freq();
+            // Calculate new offset relative to new RF center
+            qint64 new_offset = tuner_abs_freq - new_rf_freq - d_lnb_lo;
+            tuner->set_center_freq((double)new_offset);
+
+            // Check if tuner is within valid bandwidth
+            bool in_range = std::abs(new_offset) <= max_offset;
+            bool user_enabled = tuner->is_enabled();  // Respect user's manual enable/disable
+
+            // Set bypass state on the channel
+            tuner->set_bypassed(!in_range);
+
+            // Marker visibility based on range only (so disabled tuners are still visible)
+            ui->plotter->setTunerMarkerEnabled(id, in_range);
+
+            // Determine tuner status and audio based on range AND user enable
+            TunerStatus status;
+            bool is_muted = false;
+            auto mute_it = channel_muted.find(id);
+            if (mute_it != channel_muted.end()) {
+                is_muted = mute_it->second;
+            }
+
+            if (!user_enabled) {
+                status = TunerStatus::Disabled;
+                tuner->set_audio_gain(0.0f);
+            } else if (!in_range) {
+                status = TunerStatus::Bypassed;
+                tuner->set_audio_gain(0.0f);
+            } else if (is_muted) {
+                // Tuner in range AND user-enabled but muted
+                status = TunerStatus::Running;
+                tuner->set_audio_gain(0.0f);
+            } else {
+                // Tuner in range AND user-enabled AND not muted - restore audio gain
+                status = TunerStatus::Running;
+                float channel_vol = 1.0f;
+                auto it = channel_volumes.find(id);
+                if (it != channel_volumes.end()) {
+                    channel_vol = it->second / 100.0f;
+                }
+                tuner->set_audio_gain(d_main_gain_linear * channel_vol);
+            }
+
+            if (tuner_list_widget) {
+                tuner_list_widget->update_tuner_status(id, status);
+            }
+
+            // Marker stays at same absolute freq (just update to refresh display)
+            ui->plotter->updateTunerFrequency(id, tuner_abs_freq);
+        }
+    }
+
+    // Update UI elements
     ui->freqCtrl->setFrequency(rx_freq);
     uiDockBookmarks->setNewFrequency(rx_freq);
 }
@@ -1010,13 +1616,17 @@ void MainWindow::setLnbLo(double freq_mhz)
         m_settings->remove("input/lnb_lo");
     else
         m_settings->setValue("input/lnb_lo", d_lnb_lo);
+
+    // Update status labels to show LNB LO
+    updateSourceStatusLabels();
 }
 
 /** Select new antenna connector. */
 void MainWindow::setAntenna(const QString& antenna)
 {
     qDebug() << "New antenna selected:" << antenna;
-    rx->set_antenna(antenna.toStdString());
+    if (tuner_manager)
+        tuner_manager->set_antenna(antenna.toStdString());
 }
 
 /**
@@ -1045,13 +1655,15 @@ void MainWindow::setFilterOffset(qint64 freq_hz)
  */
 void MainWindow::setGain(const QString& name, double gain)
 {
-    rx->set_gain(name.toStdString(), gain);
+    if (tuner_manager)
+        tuner_manager->set_gain(name.toStdString(), gain);
 }
 
 /** Enable / disable hardware AGC. */
 void MainWindow::setAutoGain(bool enabled)
 {
-    rx->set_auto_gain(enabled);
+    if (tuner_manager)
+        tuner_manager->set_auto_gain(enabled);
     if (!enabled)
         uiDockInputCtl->restoreManualGains();
 }
@@ -1077,13 +1689,15 @@ void MainWindow::setFreqCorr(double ppm)
 /** Enable/disable I/Q reversion. */
 void MainWindow::setIqSwap(bool reversed)
 {
-    rx->set_iq_swap(reversed);
+    if (tuner_manager)
+        tuner_manager->set_iq_swap(reversed);
 }
 
 /** Enable/disable automatic DC removal. */
 void MainWindow::setDcCancel(bool enabled)
 {
-    rx->set_dc_cancel(enabled);
+    if (tuner_manager)
+        tuner_manager->set_dc_cancel(enabled);
 }
 
 /** Enable/disable automatic IQ balance. */
@@ -1091,7 +1705,8 @@ void MainWindow::setIqBalance(bool enabled)
 {
     try
     {
-        rx->set_iq_balance(enabled);
+        if (tuner_manager)
+            tuner_manager->set_iq_balance(enabled);
     }
     catch (std::exception &x)
     {
@@ -1121,9 +1736,16 @@ void MainWindow::setIgnoreLimits(bool ignore_limits)
 {
     updateHWFrequencyRange(ignore_limits);
 
-    auto filter_offset = qRound64(rx->get_filter_offset());
-    auto freq = qRound64(rx->get_rf_freq());
-    ui->freqCtrl->setFrequency(d_lnb_lo + freq + filter_offset);
+    // Get filter offset from active tuner
+    double filter_offset = 0.0;
+    if (tuner_manager) {
+        auto* tuner = tuner_manager->get_channel_impl(tuner_manager->get_active_channel());
+        if (tuner) {
+            filter_offset = tuner->get_center_freq();
+        }
+    }
+    auto freq = tuner_manager ? qRound64(tuner_manager->get_rf_freq()) : 0;
+    ui->freqCtrl->setFrequency(d_lnb_lo + freq + (qint64)filter_offset);
 
     // This will ensure that if frequency is clamped and that
     // the UI is updated with the correct frequency.
@@ -1175,7 +1797,14 @@ void MainWindow::selectDemod(int mode_idx)
     double  cwofs = 0.0;
     int     filter_preset = uiDockRxOpt->currentFilter();
     int     flo=0, fhi=0, click_res=100;
-    bool    rds_enabled;
+    bool    rds_enabled = false;
+
+    // Get active tuner - if none, just update UI without changing DSP
+    ReceiverChannel* tuner = nullptr;
+    if (tuner_manager) {
+        channel_id active = tuner_manager->get_active_channel();
+        tuner = tuner_manager->get_channel_impl(active);
+    }
 
     // validate mode_idx
     if (mode_idx < DockRxOpt::MODE_OFF || mode_idx >= DockRxOpt::MODE_LAST)
@@ -1188,7 +1817,9 @@ void MainWindow::selectDemod(int mode_idx)
     uiDockRxOpt->getFilterPreset(mode_idx, filter_preset, &flo, &fhi);
     d_filter_shape = (receiver::filter_shape)uiDockRxOpt->currentFilterShape();
 
-    rds_enabled = rx->is_rds_decoder_active();
+    if (rx) {
+        rds_enabled = rx->is_rds_decoder_active();
+    }
     if (rds_enabled)
         setRdsDecoder(false);
     uiDockRDS->setDisabled();
@@ -1197,7 +1828,7 @@ void MainWindow::selectDemod(int mode_idx)
 
     case DockRxOpt::MODE_OFF:
         /* Spectrum analyzer only */
-        if (rx->is_recording_audio())
+        if (rx && rx->is_recording_audio())
         {
             stopAudioRec();
             uiDockAudio->setAudioRecButtonState(false);
@@ -1206,30 +1837,36 @@ void MainWindow::selectDemod(int mode_idx)
         {
             dec_afsk1200->close();
         }
-        rx->set_demod(receiver::RX_DEMOD_OFF);
+        if (tuner) {
+            tuner->set_demod(ReceiverChannel::RX_DEMOD_OFF);
+            tuner->set_audio_gain(0.0f);  // Mute audio when demod is OFF
+        }
         click_res = 1000;
         break;
 
     case DockRxOpt::MODE_RAW:
         /* Raw I/Q; max 96 ksps*/
-        rx->set_demod(receiver::RX_DEMOD_NONE);
+        if (tuner)
+            tuner->set_demod(ReceiverChannel::RX_DEMOD_NONE);
         ui->plotter->setDemodRanges(-40000, -200, 200, 40000, true);
         uiDockAudio->setFftRange(0,24000);
         click_res = 100;
         break;
 
     case DockRxOpt::MODE_AM:
-        rx->set_demod(receiver::RX_DEMOD_AM);
-        rx->set_am_dcr(uiDockRxOpt->currentAmDcr());
+        if (tuner) {
+            tuner->set_demod(ReceiverChannel::RX_DEMOD_AM);
+            tuner->set_am_dcr(uiDockRxOpt->currentAmDcr());
+        }
         ui->plotter->setDemodRanges(-40000, -200, 200, 40000, true);
         uiDockAudio->setFftRange(0,6000);
         click_res = 100;
         break;
 
     case DockRxOpt::MODE_AM_SYNC:
-        rx->set_demod(receiver::RX_DEMOD_AMSYNC);
-        rx->set_amsync_dcr(uiDockRxOpt->currentAmsyncDcr());
-        rx->set_amsync_pll_bw(uiDockRxOpt->currentAmsyncPll());
+        if (tuner) {
+            tuner->set_demod(ReceiverChannel::RX_DEMOD_AMSYNC);
+        }
         ui->plotter->setDemodRanges(-40000, -200, 200, 40000, true);
         uiDockAudio->setFftRange(0,6000);
         click_res = 100;
@@ -1238,9 +1875,11 @@ void MainWindow::selectDemod(int mode_idx)
     case DockRxOpt::MODE_NFM:
         ui->plotter->setDemodRanges(-40000, -1000, 1000, 40000, true);
         uiDockAudio->setFftRange(0, 5000);
-        rx->set_demod(receiver::RX_DEMOD_NFM);
-        rx->set_fm_maxdev(uiDockRxOpt->currentMaxdev());
-        rx->set_fm_deemph(uiDockRxOpt->currentEmph());
+        if (tuner) {
+            tuner->set_demod(ReceiverChannel::RX_DEMOD_NFM);
+            tuner->set_fm_maxdev(uiDockRxOpt->currentMaxdev());
+            tuner->set_fm_deemph(uiDockRxOpt->currentEmph());
+        }
         click_res = 100;
         break;
 
@@ -1251,12 +1890,14 @@ void MainWindow::selectDemod(int mode_idx)
         ui->plotter->setDemodRanges(-120e3, -10000, 10000, 120e3, true);
         uiDockAudio->setFftRange(0,24000);  /** FIXME: get audio rate from rx **/
         click_res = 1000;
-        if (mode_idx == DockRxOpt::MODE_WFM_MONO)
-            rx->set_demod(receiver::RX_DEMOD_WFM_M);
-        else if (mode_idx == DockRxOpt::MODE_WFM_STEREO_OIRT)
-            rx->set_demod(receiver::RX_DEMOD_WFM_S_OIRT);
-        else
-            rx->set_demod(receiver::RX_DEMOD_WFM_S);
+        if (tuner) {
+            if (mode_idx == DockRxOpt::MODE_WFM_MONO)
+                tuner->set_demod(ReceiverChannel::RX_DEMOD_WFM_M);
+            else if (mode_idx == DockRxOpt::MODE_WFM_STEREO_OIRT)
+                tuner->set_demod(ReceiverChannel::RX_DEMOD_WFM_S_OIRT);
+            else
+                tuner->set_demod(ReceiverChannel::RX_DEMOD_WFM_S);
+        }
 
         uiDockRDS->setEnabled();
         if (rds_enabled)
@@ -1265,7 +1906,8 @@ void MainWindow::selectDemod(int mode_idx)
 
     case DockRxOpt::MODE_LSB:
         /* LSB */
-        rx->set_demod(receiver::RX_DEMOD_SSB);
+        if (tuner)
+            tuner->set_demod(ReceiverChannel::RX_DEMOD_SSB);
         ui->plotter->setDemodRanges(-40000, -100, -5000, 0, false);
         uiDockAudio->setFftRange(0,3000);
         click_res = 100;
@@ -1273,7 +1915,8 @@ void MainWindow::selectDemod(int mode_idx)
 
     case DockRxOpt::MODE_USB:
         /* USB */
-        rx->set_demod(receiver::RX_DEMOD_SSB);
+        if (tuner)
+            tuner->set_demod(ReceiverChannel::RX_DEMOD_SSB);
         ui->plotter->setDemodRanges(0, 5000, 100, 40000, false);
         uiDockAudio->setFftRange(0,3000);
         click_res = 100;
@@ -1281,7 +1924,8 @@ void MainWindow::selectDemod(int mode_idx)
 
     case DockRxOpt::MODE_CWL:
         /* CW-L */
-        rx->set_demod(receiver::RX_DEMOD_SSB);
+        if (tuner)
+            tuner->set_demod(ReceiverChannel::RX_DEMOD_SSB);
         cwofs = -uiDockRxOpt->getCwOffset();
         ui->plotter->setDemodRanges(-5000, -100, 100, 5000, true);
         uiDockAudio->setFftRange(0,1500);
@@ -1290,7 +1934,8 @@ void MainWindow::selectDemod(int mode_idx)
 
     case DockRxOpt::MODE_CWU:
         /* CW-U */
-        rx->set_demod(receiver::RX_DEMOD_SSB);
+        if (tuner)
+            tuner->set_demod(ReceiverChannel::RX_DEMOD_SSB);
         cwofs = uiDockRxOpt->getCwOffset();
         ui->plotter->setDemodRanges(-5000, -100, 100, 5000, true);
         uiDockAudio->setFftRange(0,1500);
@@ -1309,16 +1954,106 @@ void MainWindow::selectDemod(int mode_idx)
     ui->plotter->setHiLowCutFrequencies(flo, fhi);
     ui->plotter->setClickResolution(click_res);
     ui->plotter->setFilterClickResolution(click_res);
-    rx->set_filter((double)flo, (double)fhi, d_filter_shape);
-    rx->set_cw_offset(cwofs);
-    rx->set_sql_level(uiDockRxOpt->currentSquelchLevel());
+
+    if (tuner) {
+        // Only set filter if mode is not OFF (OFF mode has no filter)
+        if (mode_idx != DockRxOpt::MODE_OFF) {
+            // Convert filter_shape to transition width for ReceiverChannel
+            double tw;
+            double bw = std::abs(fhi - flo);
+            switch (d_filter_shape) {
+                case receiver::FILTER_SHAPE_SOFT:
+                    tw = bw * 0.5;
+                    break;
+                case receiver::FILTER_SHAPE_SHARP:
+                    tw = bw * 0.1;
+                    break;
+                case receiver::FILTER_SHAPE_NORMAL:
+                default:
+                    tw = bw * 0.2;
+                    break;
+            }
+            tuner->set_filter((double)flo, (double)fhi, tw);
+
+            // Update tuner marker filter bounds
+            channel_id active_id = tuner_manager->get_active_channel();
+            if (active_id >= 0) {
+                ui->plotter->updateTunerFilter(active_id, flo, fhi);
+
+                // Set max filter width based on demod mode (from WIDE preset in filter_preset_table)
+                int max_filter_half_width = 10000;  // Default to NFM max
+                switch (mode_idx) {
+                    case DockRxOpt::MODE_OFF:     max_filter_half_width = 0;       break;
+                    case DockRxOpt::MODE_RAW:     max_filter_half_width = 15000;   break;
+                    case DockRxOpt::MODE_AM:
+                    case DockRxOpt::MODE_AM_SYNC: max_filter_half_width = 10000;   break;
+                    case DockRxOpt::MODE_LSB:
+                    case DockRxOpt::MODE_USB:     max_filter_half_width = 4000;    break;
+                    case DockRxOpt::MODE_CWL:
+                    case DockRxOpt::MODE_CWU:     max_filter_half_width = 1000;    break;
+                    case DockRxOpt::MODE_NFM:     max_filter_half_width = 10000;   break;
+                    case DockRxOpt::MODE_WFM_MONO:
+                    case DockRxOpt::MODE_WFM_STEREO:
+                    case DockRxOpt::MODE_WFM_STEREO_OIRT:
+                                                 max_filter_half_width = 100000; break;  // WFM WIDE preset ±100kHz
+                    default:                     max_filter_half_width = 10000;   break;
+                }
+                ui->plotter->setTunerMaxFilterWidth(active_id, max_filter_half_width);
+            }
+        }
+        tuner->set_cw_offset(cwofs);
+        tuner->set_sql_level(uiDockRxOpt->currentSquelchLevel());
+    }
 
     remote->setMode(mode_idx);
     remote->setPassband(flo, fhi);
 
     d_have_audio = (mode_idx != DockRxOpt::MODE_OFF);
 
+    // Restore audio gain when switching from OFF to another mode
+    if (d_have_audio && tuner && tuner_manager) {
+        // Get channel volume (default 100 if not set)
+        float channel_vol = 1.0f;
+        channel_id active_id = tuner_manager->get_active_channel();
+        auto it = channel_volumes.find(active_id);
+        if (it != channel_volumes.end()) {
+            channel_vol = it->second / 100.0f;
+        }
+        // Apply combined gain (main * channel)
+        tuner->set_audio_gain(d_main_gain_linear * channel_vol);
+    }
+
     uiDockRxOpt->setCurrentDemod(mode_idx);
+
+    // Update tuner type in tuner list widget
+    if (tuner_list_widget && tuner_manager) {
+        channel_id active_id = tuner_manager->get_active_channel();
+        if (active_id >= 0) {
+            // Map mode_idx to ReceiverType
+            ReceiverType rx_type = ReceiverType::ANALOG_NFM;  // default
+            switch (mode_idx) {
+                case DockRxOpt::MODE_AM:      rx_type = ReceiverType::ANALOG_AM; break;
+                case DockRxOpt::MODE_AM_SYNC: rx_type = ReceiverType::ANALOG_AMSYNC; break;
+                case DockRxOpt::MODE_NFM:     rx_type = ReceiverType::ANALOG_NFM; break;
+                case DockRxOpt::MODE_WFM_MONO:   rx_type = ReceiverType::ANALOG_WFM_MONO; break;
+                case DockRxOpt::MODE_WFM_STEREO: rx_type = ReceiverType::ANALOG_WFM_STEREO; break;
+                case DockRxOpt::MODE_WFM_STEREO_OIRT: rx_type = ReceiverType::ANALOG_WFM_STEREO_OIRT; break;
+                case DockRxOpt::MODE_LSB:    rx_type = ReceiverType::ANALOG_LSB; break;
+                case DockRxOpt::MODE_USB:    rx_type = ReceiverType::ANALOG_USB; break;
+                case DockRxOpt::MODE_CWL:    rx_type = ReceiverType::ANALOG_CW_L; break;
+                case DockRxOpt::MODE_CWU:    rx_type = ReceiverType::ANALOG_CW_U; break;
+                default: break;
+            }
+
+            // Find and update the TunerRowWidget
+            for (auto* row : tuner_list_widget->findChildren<TunerRowWidget*>()) {
+                if (row->tuner_id() == active_id) {
+                    row->setReceiverType(rx_type);
+                    break;
+                }
+            }
+        }
+    }
 }
 
 
@@ -1330,8 +2065,11 @@ void MainWindow::setFmMaxdev(float max_dev)
 {
     qDebug() << "FM MAX_DEV: " << max_dev;
 
-    /* receiver will check range */
-    rx->set_fm_maxdev(max_dev);
+    if (tuner_manager) {
+        auto* tuner = tuner_manager->get_channel_impl(tuner_manager->get_active_channel());
+        if (tuner)
+            tuner->set_fm_maxdev(max_dev);
+    }
 }
 
 
@@ -1343,8 +2081,11 @@ void MainWindow::setFmEmph(double tau)
 {
     qDebug() << "FM TAU: " << tau;
 
-    /* receiver will check range */
-    rx->set_fm_deemph(tau);
+    if (tuner_manager) {
+        auto* tuner = tuner_manager->get_channel_impl(tuner_manager->get_active_channel());
+        if (tuner)
+            tuner->set_fm_deemph(tau);
+    }
 }
 
 
@@ -1354,12 +2095,20 @@ void MainWindow::setFmEmph(double tau)
  */
 void MainWindow::setAmDcr(bool enabled)
 {
-    rx->set_am_dcr(enabled);
+    if (tuner_manager) {
+        auto* tuner = tuner_manager->get_channel_impl(tuner_manager->get_active_channel());
+        if (tuner)
+            tuner->set_am_dcr(enabled);
+    }
 }
 
 void MainWindow::setCwOffset(int offset)
 {
-    rx->set_cw_offset(offset);
+    if (tuner_manager) {
+        auto* tuner = tuner_manager->get_channel_impl(tuner_manager->get_active_channel());
+        if (tuner)
+            tuner->set_cw_offset(offset);
+    }
 }
 
 /**
@@ -1389,6 +2138,42 @@ void MainWindow::setAmSyncPllBw(float pll_bw)
  */
 void MainWindow::setAudioGain(float value)
 {
+    // Convert dB to linear gain and store
+    d_main_gain_linear = std::pow(10.0f, value / 20.0f);
+
+    // Apply combined gain (main * channel) to enabled, non-bypassed, non-muted tuners only
+    if (tuner_manager) {
+        auto all_channels = tuner_manager->get_all_channels();
+        for (auto id : all_channels) {
+            auto* tuner = tuner_manager->get_channel_impl(id);
+            if (tuner) {
+                // Check mute state
+                bool is_muted = false;
+                auto mute_it = channel_muted.find(id);
+                if (mute_it != channel_muted.end()) {
+                    is_muted = mute_it->second;
+                }
+
+                bool enabled = tuner->is_enabled();
+                bool bypassed = tuner->is_bypassed();
+
+                // Only apply gain if tuner is enabled, not bypassed, and not muted
+                if (enabled && !bypassed && !is_muted) {
+                    // Get channel volume (default 100 if not set)
+                    float channel_vol = 1.0f;
+                    auto it = channel_volumes.find(id);
+                    if (it != channel_volumes.end()) {
+                        channel_vol = it->second / 100.0f;
+                    }
+                    float final_gain = d_main_gain_linear * channel_vol;
+                    tuner->set_audio_gain(final_gain);
+                }
+                // Disabled, bypassed, or muted tuners stay muted (gain already set to 0)
+            }
+        }
+    }
+
+    // Also set on legacy receiver for backwards compatibility
     rx->set_af_gain(value);
 }
 
@@ -1450,7 +2235,7 @@ void MainWindow::setNoiseBlanker(int nbid, bool on, float threshold)
 void MainWindow::setSqlLevel(double level_db)
 {
     rx->set_sql_level(level_db);
-    ui->sMeter->setSqlLevel(level_db);
+    // Note: sMeter removed - signal levels shown in tuner manager rows
 }
 
 /**
@@ -1459,9 +2244,22 @@ void MainWindow::setSqlLevel(double level_db)
  */
 double MainWindow::setSqlLevelAuto()
 {
-    double level = (double)rx->get_signal_pwr() + 3.0;
-    if (level > -10.0)  // avoid 0 dBFS
+    float signal_level = -100.0f;
+
+    // Get signal level from active tuner
+    if (tuner_manager) {
+        channel_id active_id = tuner_manager->get_active_channel();
+        auto* tuner = tuner_manager->get_channel_impl(active_id);
+        if (tuner) {
+            signal_level = tuner->get_signal_level();
+        }
+    }
+
+    double level = (double)signal_level + 3.0;
+
+    if (level > -10.0) { // avoid 0 dBFS
         level = uiDockRxOpt->getSqlLevel();
+    }
 
     setSqlLevel(level);
     return level;
@@ -1470,17 +2268,61 @@ double MainWindow::setSqlLevelAuto()
 /** Signal strength meter timeout. */
 void MainWindow::meterTimeout()
 {
-    float level;
+    float level = -100.0f;
 
-    level = rx->get_signal_pwr();
-    ui->sMeter->setLevel(level);
+    // Get signal level from active tuner
+    if (tuner_manager) {
+        auto* tuner = tuner_manager->get_channel_impl(tuner_manager->get_active_channel());
+        if (tuner) {
+            level = tuner->get_signal_level();
+        }
+
+        // Update RSSI indicators for all tuners
+        if (tuner_list_widget) {
+            for (int ch_id : tuner_manager->get_all_channels()) {
+                auto* channel = tuner_manager->get_channel_impl(ch_id);
+                if (channel) {
+                    // Only show signal for enabled, non-bypassed channels
+                    float ch_level;
+                    if (channel->is_enabled() && !channel->is_bypassed()) {
+                        ch_level = channel->get_signal_level();
+                    } else {
+                        ch_level = -150.0f;  // No signal for disabled/bypassed
+                    }
+                    tuner_list_widget->update_tuner_rssi(ch_id, ch_level);
+
+                    // Check squelch state and notify recorder if recording
+                    if (channel->is_new_audio_recording() || channel->is_recording_iq()) {
+                        double sql_level = channel->get_squelch_level();
+                        bool squelch_open = (ch_level > sql_level);
+                        channel->notify_squelch_open(squelch_open);
+                    }
+
+                    // Update recording duration indicators
+                    if (channel->is_recording_iq() || channel->is_new_audio_recording()) {
+                        double iq_duration = channel->get_iq_recording_duration();
+                        double audio_duration = channel->get_audio_recording_duration();
+                        tuner_list_widget->update_tuner_recording_info(ch_id, audio_duration, iq_duration);
+                    }
+                }
+            }
+        }
+    }
+
+    // Note: sMeter removed - signal levels shown in tuner manager rows
     remote->setSignalLevel(level);
+
+    // Update left-side stats (CPU, FFT rate, DSP status, tuners)
+    updateLeftStats();
 }
 
 /** Baseband FFT plot timeout. */
 void MainWindow::iqFftTimeout()
 {
-    const unsigned int fftsize = rx->iq_fft_size();
+    if (!tuner_manager)
+        return;
+
+    const unsigned int fftsize = tuner_manager->iq_fft_size();
 
     if (fftsize == 0)
     {
@@ -1511,7 +2353,7 @@ void MainWindow::iqFftTimeout()
     }
     d_last_fft_ms = now_ms;
 
-    if (rx->get_iq_fft_data(d_iqFftData.data()) >= 0)
+    if (tuner_manager->get_iq_fft_data(d_iqFftData.data()) >= 0)
         ui->plotter->setNewFftData(d_iqFftData.data(), fftsize);
 }
 
@@ -1643,9 +2485,9 @@ void MainWindow::startIqRecording(const QString& recdir, const QString& format)
     qDebug() << __func__;
     // generate file name using date, time, rf freq in kHz and BW in Hz
     // gqrx_iq_yyyymmdd_hhmmss_freq_bw_fc.raw
-    auto freq = qRound64(rx->get_rf_freq());
-    auto sr = qRound64(rx->get_input_rate());
-    auto dec = (quint32)(rx->get_input_decim());
+    auto freq = tuner_manager ? qRound64(tuner_manager->get_rf_freq()) : 0LL;
+    auto sr = tuner_manager ? qRound64(tuner_manager->get_input_rate()) : 0LL;
+    auto dec = tuner_manager ? (quint32)(tuner_manager->get_input_decim()) : 1;
     auto currentDate = QDateTime::currentDateTimeUtc();
     auto filenameTemplate = currentDate.toString("%1/gqrx_yyyyMMdd_hhmmss_%2_%3_fc.%4").arg(recdir).arg(freq).arg(sr/dec);
     bool sigmf = (format == "SigMF");
@@ -1680,7 +2522,19 @@ void MainWindow::startIqRecording(const QString& recdir, const QString& format)
     }
 
     // start recorder; fails if recording already in progress
-    if (!ok || rx->start_iq_recording(lastRec.toStdString()))
+    // Use tuner_manager if available (multi-tuner mode), otherwise fall back to rx
+    bool recording_failed = false;
+    if (tuner_manager) {
+        if (tuner_manager->start_iq_recording(lastRec.toStdString()) != TunerManager::STATUS_OK) {
+            recording_failed = true;
+        }
+    } else {
+        if (rx->start_iq_recording(lastRec.toStdString())) {
+            recording_failed = true;
+        }
+    }
+
+    if (!ok || recording_failed)
     {
         // remove metadata file if we managed to open it
         if (sigmf && metaFile.isOpen())
@@ -1709,10 +2563,23 @@ void MainWindow::stopIqRecording()
 {
     qDebug() << __func__;
 
-    if (rx->stop_iq_recording())
+    // Use tuner_manager if available (multi-tuner mode), otherwise fall back to rx
+    bool stop_failed = false;
+    if (tuner_manager && tuner_manager->is_recording_iq()) {
+        if (tuner_manager->stop_iq_recording() != TunerManager::STATUS_OK) {
+            stop_failed = true;
+        }
+    } else {
+        if (rx->stop_iq_recording()) {
+            stop_failed = true;
+        }
+    }
+
+    if (stop_failed) {
         ui->statusBar->showMessage(tr("Error stopping I/Q recoder"));
-    else
+    } else {
         ui->statusBar->showMessage(tr("I/Q data recoding stopped"), 5000);
+    }
 }
 
 void MainWindow::startIqPlayback(const QString& filename, float samprate, qint64 center_freq)
@@ -1727,18 +2594,23 @@ void MainWindow::startIqPlayback(const QString& filename, float samprate, qint64
 
     auto sri = (int)samprate;
     auto cf  = center_freq;
-    double current_offset = rx->get_filter_offset();
     QString escapedFilename = receiver::escape_filename(filename.toStdString()).c_str();
     auto devstr = QString("file=%1,rate=%2,freq=%3,throttle=true,repeat=false")
             .arg(escapedFilename).arg(sri).arg(cf);
 
     qDebug() << __func__ << ":" << devstr;
 
-    rx->set_input_device(devstr.toStdString());
+    if (tuner_manager) {
+        tuner_manager->set_input_device(devstr.toStdString());
+    }
     updateHWFrequencyRange(false);
 
     // sample rate
-    auto actual_rate = rx->set_input_rate((double)samprate);
+    double actual_rate = 0.0;
+    if (tuner_manager) {
+        tuner_manager->set_input_rate((double)samprate);
+        actual_rate = tuner_manager->get_input_rate();
+    }
     qDebug() << "Requested sample rate:" << samprate;
     qDebug() << "Actual sample rate   :" << QString("%1")
                 .arg(actual_rate, 0, 'f', 6);
@@ -1746,12 +2618,16 @@ void MainWindow::startIqPlayback(const QString& filename, float samprate, qint64
     uiDockRxOpt->setFilterOffsetRange((qint64)(actual_rate));
     ui->plotter->setSampleRate(actual_rate);
     ui->plotter->setSpanFreq((quint32)actual_rate);
-    if (std::abs(current_offset) > actual_rate / 2)
-        on_plotter_newDemodFreq(center_freq, 0);
-    else
-        on_plotter_newDemodFreq(center_freq + current_offset, current_offset);
+
+    // Set center frequency on tuner_manager and frequency display
+    if (tuner_manager) {
+        tuner_manager->set_rf_freq((double)center_freq);
+    }
+    ui->freqCtrl->setFrequency(center_freq);
+    ui->plotter->setCenterFreq(center_freq);
 
     remote->setBandwidth(actual_rate);
+    updateSourceStatusLabels();
 
     // FIXME: would be nice with good/bad status
     ui->statusBar->showMessage(tr("Playing %1").arg(filename));
@@ -1771,14 +2647,17 @@ void MainWindow::stopIqPlayback()
 
     // restore original input device
     auto indev = m_settings->value("input/device", "").toString();
-    rx->set_input_device(indev.toStdString());
+    if (tuner_manager) {
+        tuner_manager->set_input_device(indev.toStdString());
+    }
 
     // restore sample rate
     bool conv_ok;
     auto sr = m_settings->value("input/sample_rate", 0).toInt(&conv_ok);
-    if (conv_ok && (sr > 0))
+    if (conv_ok && (sr > 0) && tuner_manager)
     {
-        auto actual_rate = rx->set_input_rate(sr);
+        tuner_manager->set_input_rate(sr);
+        auto actual_rate = tuner_manager->get_input_rate();
         qDebug() << "Requested sample rate:" << sr;
         qDebug() << "Actual sample rate   :" << QString("%1")
                     .arg(actual_rate, 0, 'f', 6);
@@ -1787,6 +2666,7 @@ void MainWindow::stopIqPlayback()
         ui->plotter->setSampleRate(actual_rate);
         ui->plotter->setSpanFreq((quint32)actual_rate);
         remote->setBandwidth(sr);
+        updateSourceStatusLabels();
 
         // not needed as long as we are not recording in iq_tool
         //iq_tool->setSampleRate(sr);
@@ -1817,7 +2697,14 @@ void MainWindow::stopIqPlayback()
  */
 void MainWindow::seekIqFile(qint64 seek_pos)
 {
-    rx->seek_iq_file((long)seek_pos);
+
+    // Use tuner_manager if available, otherwise fall back to rx
+    if (tuner_manager) {
+        tuner_manager->seek_iq_file((long)seek_pos);
+    } else {
+        rx->seek_iq_file((long)seek_pos);
+    }
+
 }
 
 /** FFT size has changed. */
@@ -1826,7 +2713,10 @@ void MainWindow::setIqFftSize(int size)
     qDebug() << "Changing baseband FFT size to" << size;
     d_iqFftData.resize(size);
     d_iqFftData.shrink_to_fit();
-    rx->set_iq_fft_size(size);
+    if (tuner_manager)
+    {
+        tuner_manager->set_iq_fft_size(size);
+    }
 }
 
 /** Baseband FFT rate has changed. */
@@ -1847,12 +2737,16 @@ void MainWindow::setIqFftRate(int fps)
 
         ui->plotter->setFftRate(fps);
         if (iq_fft_timer->isActive())
+        {
             ui->plotter->setRunningState(true);
+        }
     }
 
     // Limit to 500 fps
     if (interval > 1 && iq_fft_timer->isActive())
+    {
         iq_fft_timer->setInterval(interval);
+    }
 
     uiDockFft->setWfResolution(ui->plotter->getWfTimeRes());
 
@@ -1863,7 +2757,8 @@ void MainWindow::setIqFftRate(int fps)
 void MainWindow::setIqFftWindow(int type)
 {
     d_fftWindowType = type;
-    rx->set_iq_fft_window(d_fftWindowType, d_fftNormalizeEnergy);
+    if (tuner_manager)
+        tuner_manager->set_iq_fft_window(d_fftWindowType, d_fftNormalizeEnergy);
 }
 
 void MainWindow::plotScaleChanged(int type, bool perHz)
@@ -1877,7 +2772,8 @@ void MainWindow::plotScaleChanged(int type, bool perHz)
     // or not perHz is specified.
 
     d_fftNormalizeEnergy = (type == 2) || (type == 1 && perHz);
-    rx->set_iq_fft_window(d_fftWindowType, d_fftNormalizeEnergy);
+    if (tuner_manager)
+        tuner_manager->set_iq_fft_window(d_fftWindowType, d_fftNormalizeEnergy);
 }
 
 /** Waterfall time span has changed. */
@@ -1943,8 +2839,304 @@ void MainWindow::on_actionDSP_triggered(bool checked)
 
     if (checked)
     {
-        /* start receiver */
-        rx->start();
+        /* Start TunerManager (owns SDR source, FFT, and all tuners) */
+        if (tuner_manager) {
+            auto status = tuner_manager->start();
+            if (status != TunerManager::STATUS_OK) {
+                qWarning() << "TunerManager failed to start, status:" << status;
+            }
+
+            // Restore tuners from saved state, or create default tuner on first run
+            int existing_count = tuner_manager->get_active_channel_count();
+            if (existing_count == 0) {
+                int saved_count = 0;
+                int active_index = 0;
+
+                if (m_settings && m_settings->contains("tuner/count")) {
+                    saved_count = m_settings->value("tuner/count", 0).toInt();
+                    active_index = m_settings->value("tuner/active_index", 0).toInt();
+                } else {
+                    // First run - don't auto-create tuners, let user add them manually
+                    saved_count = 0;
+                }
+
+                // Create and restore each tuner
+                std::vector<channel_id> created_ids;
+                for (int i = 0; i < saved_count; i++) {
+                    QString prefix = QString("tuners/%1/").arg(i);
+
+                    // Get saved receiver type (preferred) or fall back to demod conversion
+                    ReceiverType rx_type = ReceiverType::ANALOG_NFM;  // Default
+                    if (m_settings && m_settings->contains(prefix + "receiver_type")) {
+                        rx_type = static_cast<ReceiverType>(m_settings->value(prefix + "receiver_type").toInt());
+                    } else if (m_settings) {
+                        // Legacy: convert from demod value
+                        int demod_int = m_settings->value(prefix + "demod", (int)ReceiverChannel::RX_DEMOD_NFM).toInt();
+                        switch (demod_int) {
+                            case ReceiverChannel::RX_DEMOD_AM:
+                                rx_type = ReceiverType::ANALOG_AM;
+                                break;
+                            case ReceiverChannel::RX_DEMOD_AMSYNC:
+                                rx_type = ReceiverType::ANALOG_AMSYNC;
+                                break;
+                            case ReceiverChannel::RX_DEMOD_WFM_M:
+                                rx_type = ReceiverType::ANALOG_WFM_MONO;
+                                break;
+                            case ReceiverChannel::RX_DEMOD_WFM_S:
+                                rx_type = ReceiverType::ANALOG_WFM_STEREO;
+                                break;
+                            case ReceiverChannel::RX_DEMOD_WFM_S_OIRT:
+                                rx_type = ReceiverType::ANALOG_WFM_STEREO_OIRT;
+                                break;
+                            case ReceiverChannel::RX_DEMOD_SSB:
+                                rx_type = ReceiverType::ANALOG_USB;  // Default SSB to USB
+                                break;
+                            default:
+                                rx_type = ReceiverType::ANALOG_NFM;
+                                break;
+                        }
+                    }
+
+                    channel_id new_id = tuner_manager->create_channel(ChannelType::MANUAL, rx_type);
+                    if (new_id >= 0) {
+                        created_ids.push_back(new_id);
+                        ReceiverChannel* tuner = tuner_manager->get_channel_impl(new_id);
+                        if (tuner && m_settings) {
+                            // Restore tuner settings
+                            QString name = m_settings->value(prefix + "name", QString("Tuner %1").arg(new_id)).toString();
+                            double freq_offset = m_settings->value(prefix + "freq_offset", 0.0).toDouble();
+                            double squelch = m_settings->value(prefix + "squelch", -150.0).toDouble();
+                            int volume = m_settings->value(prefix + "volume", 18).toInt();  // Default -15dB
+                            bool muted = m_settings->value(prefix + "muted", false).toBool();
+                            bool enabled = m_settings->value(prefix + "enabled", true).toBool();
+
+                            tuner->set_channel_name(name.toStdString());
+                            tuner->set_center_freq(freq_offset);
+                            // Note: demod mode is set via rx_type when channel is created
+                            tuner->set_sql_level(squelch);
+
+                            // Populate MainWindow maps for volume/mute tracking
+                            channel_volumes[new_id] = volume;
+                            channel_muted[new_id] = muted;
+
+                            // Restore enabled state and audio gain (respecting mute)
+                            tuner->set_enabled(enabled);
+                            if (enabled && !muted) {
+                                float channel_vol = volume / 100.0f;
+                                tuner->set_audio_gain(d_main_gain_linear * channel_vol);
+                            } else {
+                                tuner->set_audio_gain(0.0f);  // Mute disabled or muted tuners
+                            }
+                        }
+                    }
+                }
+
+                // Set active tuner
+                if (!created_ids.empty()) {
+                    int idx = (active_index >= 0 && active_index < (int)created_ids.size()) ? active_index : 0;
+                    tuner_manager->set_active_channel(created_ids[idx]);
+                }
+            }
+
+            // Create markers for all tuners
+            std::vector<channel_id> tuner_ids = tuner_manager->get_all_channels();
+            for (size_t i = 0; i < tuner_ids.size(); i++) {
+                channel_id tuner_id = tuner_ids[i];
+                ReceiverChannel* tuner = tuner_manager->get_channel_impl(tuner_id);
+                if (tuner) {
+                    QString prefix = QString("tuners/%1/").arg(i);
+
+                    // Calculate marker frequency from RF center + tuner offset
+                    qint64 tuner_freq = tuner_manager->get_rf_freq() + d_lnb_lo + (qint64)tuner->get_center_freq();
+
+                    // Restore color and visibility from settings
+                    QColor marker_color = ui->plotter->getDefaultTunerColor(tuner_id);
+                    bool marker_visible = true;
+                    if (m_settings) {
+                        QString color_str = m_settings->value(prefix + "color", "").toString();
+                        if (!color_str.isEmpty()) {
+                            marker_color = QColor(color_str);
+                        }
+                        marker_visible = m_settings->value(prefix + "visible", true).toBool();
+                    }
+
+                    // Get receiver type from channel (was set during channel creation)
+                    ReceiverType rx_type = tuner->get_backend_type();
+
+                    // Get default filter bounds based on receiver type
+                    int default_filter_low = -5000;
+                    int default_filter_high = 5000;
+                    switch (rx_type) {
+                        case ReceiverType::ANALOG_WFM_MONO:
+                        case ReceiverType::ANALOG_WFM_STEREO:
+                        case ReceiverType::ANALOG_WFM_STEREO_OIRT:
+                            default_filter_low = -80000;
+                            default_filter_high = 80000;
+                            break;
+                        case ReceiverType::ANALOG_USB:
+                            default_filter_low = 0;
+                            default_filter_high = 3000;
+                            break;
+                        case ReceiverType::ANALOG_LSB:
+                            default_filter_low = -3000;
+                            default_filter_high = 0;
+                            break;
+                        case ReceiverType::ANALOG_CW_U:
+                            default_filter_low = -250;
+                            default_filter_high = 750;
+                            break;
+                        case ReceiverType::ANALOG_CW_L:
+                            default_filter_low = -750;
+                            default_filter_high = 250;
+                            break;
+                        default:
+                            break;  // NFM/AM: -5000/5000
+                    }
+
+                    // Get saved filter bounds (with type-appropriate defaults)
+                    int filter_low = m_settings ? m_settings->value(prefix + "filter_low", default_filter_low).toInt() : default_filter_low;
+                    int filter_high = m_settings ? m_settings->value(prefix + "filter_high", default_filter_high).toInt() : default_filter_high;
+
+                    // Determine max filter half width based on receiver type
+                    int max_filter_half_width = 10000;  // Default to NFM
+                    switch (rx_type) {
+                        case ReceiverType::ANALOG_OFF:
+                            max_filter_half_width = 0;
+                            break;
+                        case ReceiverType::ANALOG_RAW:
+                            max_filter_half_width = 15000;
+                            break;
+                        case ReceiverType::ANALOG_AM:
+                        case ReceiverType::ANALOG_AMSYNC:
+                        case ReceiverType::ANALOG_NFM:
+                            max_filter_half_width = 10000;
+                            break;
+                        case ReceiverType::ANALOG_WFM_MONO:
+                        case ReceiverType::ANALOG_WFM_STEREO:
+                        case ReceiverType::ANALOG_WFM_STEREO_OIRT:
+                            max_filter_half_width = 100000;  // WFM WIDE preset ±100kHz
+                            break;
+                        case ReceiverType::ANALOG_USB:
+                        case ReceiverType::ANALOG_LSB:
+                            max_filter_half_width = 4000;
+                            break;
+                        case ReceiverType::ANALOG_CW_U:
+                        case ReceiverType::ANALOG_CW_L:
+                            max_filter_half_width = 1000;
+                            break;
+                        default:
+                            max_filter_half_width = 10000;
+                            break;
+                    }
+
+                    MultiTunerPlotter::TunerMarker marker;
+                    marker.tuner_id = tuner_id;
+                    marker.name = QString::fromStdString(tuner->get_channel_name());
+                    marker.frequency = tuner_freq;
+                    marker.filter_low = filter_low;
+                    marker.filter_high = filter_high;
+                    marker.max_filter_half_width = max_filter_half_width;
+                    marker.enabled = marker_visible;
+                    marker.active = (tuner_id == tuner_manager->get_active_channel());
+                    marker.color = marker_color;
+                    marker.filter_color = marker_color;
+                    ui->plotter->setTunerMarker(tuner_id, marker);
+
+                    // Settings are now handled by TunerRowWidget - no per-tuner dock needed
+                }
+            }
+            if (!tuner_ids.empty()) {
+                ui->plotter->setMultiTunerEnabled(true);
+                ui->plotter->setActiveTuner(tuner_manager->get_active_channel());
+            }
+
+            // Refresh tuner list to show current state and sync colors
+            if (tuner_list_widget) {
+                tuner_list_widget->refresh_tuner_list();
+
+                // Sync color and filter width to tuner list widgets
+                for (size_t i = 0; i < tuner_ids.size(); i++) {
+                    channel_id tuner_id = tuner_ids[i];
+                    QString prefix = QString("tuners/%1/").arg(i);
+                    if (m_settings) {
+                        QString color_str = m_settings->value(prefix + "color", "").toString();
+
+                        if (!color_str.isEmpty()) {
+                            QColor color(color_str);
+                            // Update tuner_colors map in TunerList
+                            tuner_list_widget->update_tuner_color(tuner_id, color);
+                        }
+
+                        // Sync filter width - get type-appropriate defaults
+                        int default_filter_low = -5000;
+                        int default_filter_high = 5000;
+                        ReceiverChannel* ch = tuner_manager->get_channel_impl(tuner_id);
+                        if (ch) {
+                            ReceiverType rt = ch->get_backend_type();
+                            switch (rt) {
+                                case ReceiverType::ANALOG_WFM_MONO:
+                                case ReceiverType::ANALOG_WFM_STEREO:
+                                case ReceiverType::ANALOG_WFM_STEREO_OIRT:
+                                    default_filter_low = -80000;
+                                    default_filter_high = 80000;
+                                    break;
+                                case ReceiverType::ANALOG_USB:
+                                    default_filter_low = 0;
+                                    default_filter_high = 3000;
+                                    break;
+                                case ReceiverType::ANALOG_LSB:
+                                    default_filter_low = -3000;
+                                    default_filter_high = 0;
+                                    break;
+                                case ReceiverType::ANALOG_CW_U:
+                                    default_filter_low = -250;
+                                    default_filter_high = 750;
+                                    break;
+                                case ReceiverType::ANALOG_CW_L:
+                                    default_filter_low = -750;
+                                    default_filter_high = 250;
+                                    break;
+                                default:
+                                    break;
+                            }
+                        }
+                        int filter_low = m_settings->value(prefix + "filter_low", default_filter_low).toInt();
+                        int filter_high = m_settings->value(prefix + "filter_high", default_filter_high).toInt();
+                        tuner_list_widget->update_tuner_filter_width(tuner_id, filter_low, filter_high);
+                    }
+                }
+            }
+        }
+
+        /* Update bypass states and sync tuner list */
+        if (tuner_manager) {
+            tuner_manager->update_channel_bypass_states();
+        }
+        if (tuner_list_widget) {
+            tuner_list_widget->refresh_tuner_list();
+            tuner_list_widget->set_all_tuners_running(true);
+
+            // Sync volume/mute state from UI to MainWindow maps
+            // This ensures saved settings are applied when DSP starts
+            for (channel_id ch_id : tuner_manager->get_all_channels()) {
+                int vol = tuner_list_widget->getTunerVolume(ch_id);
+                bool muted = tuner_list_widget->getTunerMuted(ch_id);
+                channel_volumes[ch_id] = vol;
+                channel_muted[ch_id] = muted;
+
+
+                // Apply the volume/mute to the actual channel
+                ReceiverChannel* channel = tuner_manager->get_channel_impl(ch_id);
+                if (channel && channel->is_enabled()) {
+                    if (muted) {
+                        channel->set_audio_gain(0.0f);
+                    } else {
+                        float channel_vol = vol / 100.0f;
+                        channel->set_audio_gain(d_main_gain_linear * channel_vol);
+                    }
+                }
+            }
+        }
 
         /* start GUI timers */
         meter_timer->start(100);
@@ -1974,8 +3166,15 @@ void MainWindow::on_actionDSP_triggered(bool checked)
         audio_fft_timer->stop();
         rds_timer->stop();
 
-        /* stop receiver */
-        rx->stop();
+        /* Stop TunerManager */
+        if (tuner_manager) {
+            tuner_manager->stop();
+        }
+
+        /* Set all tuners to stopped state */
+        if (tuner_list_widget) {
+            tuner_list_widget->set_all_tuners_running(false);
+        }
 
         /* update menu text and button tooltip */
         ui->actionDSP->setToolTip(tr("Start DSP processing"));
@@ -2008,8 +3207,10 @@ int MainWindow::on_actionIoConfig_triggered()
         bool dsp_running = ui->actionDSP->isChecked();
 
         if (dsp_running)
+        {
             // suspend DSP while we reload settings
             on_actionDSP_triggered(false);
+        }
 
         // Refresh LNB LO in dock widget, otherwise changes will be lost
         uiDockInputCtl->readLnbLoFromSettings(m_settings);
@@ -2017,8 +3218,10 @@ int MainWindow::on_actionIoConfig_triggered()
         loadConfig(m_settings->fileName(), false, false);
 
         if (dsp_running)
+        {
             // restsart DSP
             on_actionDSP_triggered(true);
+        }
     }
 
     delete ioconf;
@@ -2098,18 +3301,128 @@ void MainWindow::on_actionIqTool_triggered()
 }
 
 
-/* CPlotter::NewDemodFreq() is emitted */
+/* CPlotter::NewDemodFreq() is emitted when clicking on empty space (not on a tuner marker) */
 void MainWindow::on_plotter_newDemodFreq(qint64 freq, qint64 delta)
 {
-    // set RX filter
-    rx->set_filter_offset((double) delta);
+    Q_UNUSED(freq);
+    Q_UNUSED(delta);
 
-    // update RF freq label and channel filter offset
-    uiDockRxOpt->setFilterOffset(delta);
-    ui->freqCtrl->setFrequency(freq);
+    // In TunerManager mode, ignore all clicks on empty space
+    // Tuners can only be moved by dragging their markers directly
+    // To tune to a frequency, user must add a tuner first, then drag it
+    if (tuner_manager) {
+        return;
+    }
+}
 
-    if (rx->is_rds_decoder_active())
-        rx->reset_rds_parser();
+/* MultiTunerPlotter::tuneToFrequency() is emitted when dragging a tuner marker */
+void MainWindow::onTunerDragged(int tuner_id, qint64 freq)
+{
+    if (!tuner_manager)
+        return;
+
+    auto* tuner = tuner_manager->get_channel_impl(tuner_id);
+    if (!tuner)
+        return;
+
+    // Calculate DDC offset from display frequency
+    // Display freq = RF + LNB + offset
+    // So offset = Display freq - RF - LNB
+    qint64 rf_freq = tuner_manager->get_rf_freq();
+    qint64 delta = freq - rf_freq - d_lnb_lo;
+
+    // Set the tuner's DDC offset (this is the coarse tuning)
+    tuner->set_center_freq((double)delta);
+
+    // Don't update main freqCtrl - it shows SDR center frequency, not tuner frequency
+    // Tuner frequency is shown in the tuner list widget
+
+    // Update frequency display in tuner list widget and re-sort by frequency
+    if (tuner_list_widget) {
+        tuner_list_widget->update_tuner_frequency(tuner_id, freq);
+    }
+
+    // The marker position is already updated by MultiTunerPlotter during drag
+}
+
+/* MultiTunerPlotter::filterResized() is emitted when filter edge is dragged */
+void MainWindow::onFilterResized(int tuner_id, int filter_low, int filter_high)
+{
+    if (!tuner_manager)
+        return;
+
+    auto* tuner = tuner_manager->get_channel_impl(tuner_id);
+    if (!tuner)
+        return;
+
+
+    // Apply the new filter to the receiver channel
+    double tw = std::abs(filter_high - filter_low) * 0.2;  // 20% transition width
+    tuner->set_filter((double)filter_low, (double)filter_high, tw);
+
+    // Update tuner list widget bandwidth display
+    if (tuner_list_widget) {
+        tuner_list_widget->update_tuner_filter_width(tuner_id, filter_low, filter_high);
+    }
+
+    // Update UI if this is the active tuner
+    if (tuner_id == tuner_manager->get_active_channel()) {
+        ui->plotter->setHiLowCutFrequencies(filter_low, filter_high);
+        uiDockRxOpt->setFilterParam(filter_low, filter_high);
+    }
+}
+
+/* MultiTunerPlotter::panSdrFrequency() is emitted when shift+dragging tuner */
+void MainWindow::onPanSdrFrequency(int dragged_tuner_id, qint64 new_freq)
+{
+    if (!tuner_manager)
+        return;
+
+    // new_freq is the display frequency (includes LNB offset)
+    // Calculate hardware frequency
+    qint64 new_hw_freq = new_freq - d_lnb_lo;
+    qint64 old_hw_freq = d_hw_freq;
+
+    // Recalculate DDC offsets for all tuners EXCEPT the dragged one
+    // - Dragged tuner: stays at same screen position (DDC offset unchanged, absolute freq changes)
+    // - Other tuners: keep same absolute frequency (DDC offset recalculated, they move on screen)
+    auto all_ids = tuner_manager->get_all_channels();
+    for (channel_id id : all_ids) {
+        if (id == dragged_tuner_id)
+            continue;  // Skip the dragged tuner - its DDC offset stays the same
+
+        auto* tuner = tuner_manager->get_channel_impl(id);
+        if (tuner) {
+            // Get current absolute frequency
+            qint64 abs_freq = old_hw_freq + d_lnb_lo + (qint64)tuner->get_center_freq();
+
+            // Calculate new DDC offset to maintain same absolute frequency
+            double new_offset = (double)(abs_freq - new_hw_freq - d_lnb_lo);
+            tuner->set_center_freq(new_offset);
+        }
+    }
+
+    // Update the dragged tuner's absolute frequency in the plotter marker
+    // (its DDC offset is unchanged, so its absolute freq = new_hw_freq + LNB + old_offset)
+    auto* dragged = tuner_manager->get_channel_impl(dragged_tuner_id);
+    if (dragged) {
+        qint64 new_abs_freq = new_hw_freq + d_lnb_lo + (qint64)dragged->get_center_freq();
+        ui->plotter->updateTunerFrequency(dragged_tuner_id, new_abs_freq);
+        if (tuner_list_widget) {
+            tuner_list_widget->update_tuner_frequency(dragged_tuner_id, new_abs_freq);
+        }
+    }
+
+    // Update SDR hardware frequency
+    d_hw_freq = new_hw_freq;
+    tuner_manager->set_rf_freq((double)new_hw_freq);
+
+    // Update plotter center frequency
+    ui->plotter->setCenterFreq(new_freq);
+
+    // Update UI elements
+    ui->freqCtrl->setFrequency(new_freq);
+    uiDockRxOpt->setHwFreq(d_hw_freq);
 }
 
 /* CPlotter::NewfilterFreq() is emitted or bookmark activated */
@@ -2123,6 +3436,14 @@ void MainWindow::on_plotter_newFilterFreq(int low, int high)
 
     if (retcode == receiver::STATUS_OK)
         uiDockRxOpt->setFilterParam(low, high);
+
+    // Update active tuner marker filter bounds
+    if (tuner_manager) {
+        channel_id active_id = tuner_manager->get_active_channel();
+        if (active_id >= 0) {
+            ui->plotter->updateTunerFilter(active_id, low, high);
+        }
+    }
 }
 
 /** Full screen button or menu item toggled. */
@@ -2558,4 +3879,975 @@ void MainWindow::toggleMarkers()
 {
     enableMarkers(!d_show_markers);
     uiDockFft->setMarkersEnabled(d_show_markers);
+}
+
+void MainWindow::onTunerRemoved(int tuner_id)
+{
+    if (!tuner_manager) {
+        return;
+    }
+
+    // Remove marker from plotter first (before destroy_channel)
+    ui->plotter->removeTunerMarker(tuner_id);
+
+    // Use IChannelManager API
+    tuner_manager->destroy_channel(tuner_id);
+
+    // Refresh the tuner list UI
+    if (tuner_list_widget) {
+        tuner_list_widget->refresh_tuner_list();
+    }
+
+    // Select first available tuner if needed, or disable multi-tuner mode
+    auto all_channels = tuner_manager->get_all_channels();
+    if (!all_channels.empty()) {
+        tuner_manager->set_active_channel(all_channels[0]);
+        ui->plotter->setActiveTuner(all_channels[0]);
+    } else {
+        // No tuners left - disable multi-tuner display
+        ui->plotter->setMultiTunerEnabled(false);
+    }
+}
+
+void MainWindow::addTuner()
+{
+    // Default to NFM
+    addTunerWithType(ReceiverType::ANALOG_NFM);
+}
+
+void MainWindow::addTunerWithType(ReceiverType type)
+{
+    if (!tuner_manager) {
+        QMessageBox::warning(this, tr("Error"), tr("No tuner manager available"));
+        return;
+    }
+
+    // Get input rate from tuner manager (now owns SDR)
+    double input_rate = tuner_manager->get_input_rate();
+    unsigned int input_decim = tuner_manager->get_input_decim();
+
+    if (input_rate <= 0) {
+        QMessageBox::warning(this, tr("Error"),
+            tr("SDR not connected or invalid sample rate.\nInput rate: %1").arg(input_rate));
+        return;
+    }
+
+    tuner_manager->set_input_rate(input_rate);
+    tuner_manager->set_input_decim(input_decim);
+
+    // Use new IChannelManager API
+    channel_id new_tuner_id = tuner_manager->create_channel(ChannelType::MANUAL, type);
+    if (new_tuner_id >= 0) {
+        tuner_manager->set_active_channel(new_tuner_id);
+
+        // Set tuner's DDC offset to center of visible FFT display
+        auto* tuner = tuner_manager->get_channel_impl(new_tuner_id);
+        if (tuner) {
+            // Get the center of the currently visible FFT display
+            // plotter->getCenterFreq() = display center (includes LNB offset)
+            // plotter->getFftCenterFreq() = offset from center when zoomed
+            qint64 visible_center = ui->plotter->getCenterFreq() + ui->plotter->getFftCenterFreq();
+            qint64 rf_freq = tuner_manager->get_rf_freq();
+
+            // DDC offset = visible center - (rf + lnb)
+            double ddc_offset = (double)(visible_center - rf_freq - d_lnb_lo);
+            tuner->set_center_freq(ddc_offset);
+
+            // Set initial audio gain (main gain * default channel volume at -15dB)
+            float default_vol = 0.18f;  // -15dB = 10^(-15/20) ≈ 0.178
+            tuner->set_audio_gain(d_main_gain_linear * default_vol);
+
+            // Add to channel volumes map at default 18%
+            channel_volumes[new_tuner_id] = 18;
+        }
+
+        // Update frequency display to show tuner frequency (visible center)
+        qint64 tuner_freq = ui->plotter->getCenterFreq() + ui->plotter->getFftCenterFreq();
+        ui->freqCtrl->setFrequency(tuner_freq);
+
+        // Determine default filter width and max width based on type
+        int filter_low = -6250;   // Default NFM
+        int filter_high = 6250;
+        int max_filter_half_width = 10000;  // Default NFM max
+
+        switch (type) {
+        case ReceiverType::ANALOG_NFM:
+            filter_low = -6250;
+            filter_high = 6250;
+            max_filter_half_width = 10000;
+            break;
+        case ReceiverType::ANALOG_AM:
+        case ReceiverType::ANALOG_AMSYNC:
+            filter_low = -5000;
+            filter_high = 5000;
+            max_filter_half_width = 10000;
+            break;
+        case ReceiverType::ANALOG_WFM_MONO:
+        case ReceiverType::ANALOG_WFM_STEREO:
+        case ReceiverType::ANALOG_WFM_STEREO_OIRT:
+            filter_low = -80000;
+            filter_high = 80000;
+            max_filter_half_width = 100000;
+            break;
+        case ReceiverType::ANALOG_USB:
+            filter_low = 0;
+            filter_high = 3000;
+            max_filter_half_width = 4000;
+            break;
+        case ReceiverType::ANALOG_LSB:
+            filter_low = -3000;
+            filter_high = 0;
+            max_filter_half_width = 4000;
+            break;
+        case ReceiverType::ANALOG_CW_U:
+        case ReceiverType::ANALOG_CW_L:
+            filter_low = -250;
+            filter_high = 250;
+            max_filter_half_width = 1000;
+            break;
+        default:
+            break;
+        }
+
+        // Add marker to plotter for the new tuner at center frequency
+        MultiTunerPlotter::TunerMarker marker;
+        marker.tuner_id = new_tuner_id;
+        marker.name = QString("Tuner %1").arg(new_tuner_id);
+        marker.frequency = tuner_freq;
+        marker.filter_low = filter_low;
+        marker.filter_high = filter_high;
+        marker.max_filter_half_width = max_filter_half_width;
+        marker.enabled = true;
+        marker.active = true;
+        marker.color = ui->plotter->getDefaultTunerColor(new_tuner_id);
+        ui->plotter->setTunerMarker(new_tuner_id, marker);
+        ui->plotter->setActiveTuner(new_tuner_id);
+        ui->plotter->setMultiTunerEnabled(true);
+
+
+        // Apply the type-based filter settings to the plotter marker
+        ui->plotter->updateTunerFilter(new_tuner_id, filter_low, filter_high);
+
+        // Settings are now handled by TunerRowWidget - no per-tuner dock needed
+
+        // Refresh the tuner list UI and sync filter width
+        if (tuner_list_widget) {
+            tuner_list_widget->refresh_tuner_list();
+            tuner_list_widget->update_tuner_filter_width(new_tuner_id, filter_low, filter_high);
+        }
+    } else {
+        QMessageBox::warning(this, tr("Error"), tr("Failed to add tuner"));
+    }
+}
+
+void MainWindow::removeTuner()
+{
+    if (!tuner_manager) {
+        return;
+    }
+
+    // Use new IChannelManager API
+    channel_id active_tuner = tuner_manager->get_active_channel();
+
+    if (active_tuner < 0) {
+        QMessageBox::information(this, tr("Cannot Remove"),
+                                tr("No tuner selected."));
+        return;
+    }
+
+    int ret = QMessageBox::question(this, tr("Remove Tuner"),
+                                   QString("Remove tuner %1?").arg(active_tuner),
+                                   QMessageBox::Yes | QMessageBox::No);
+
+    if (ret == QMessageBox::Yes) {
+
+        // Remove marker from plotter first (before destroy_channel)
+        ui->plotter->removeTunerMarker(active_tuner);
+
+        // Use new IChannelManager API to destroy channel
+        tuner_manager->destroy_channel(active_tuner);
+
+        // Update tuner list display
+        if (tuner_list_widget) {
+            tuner_list_widget->refresh_tuner_list();
+        }
+
+        // Disable multi-tuner display if only one tuner left
+        if (tuner_manager->get_active_channel_count() <= 1) {
+            ui->plotter->setMultiTunerEnabled(false);
+        }
+    }
+}
+
+// Per-tuner docks removed - settings now consolidated in TunerRowWidget
+
+void MainWindow::onTunerEnabledChanged(int tuner_id, bool enabled)
+{
+    if (tuner_manager) {
+        ReceiverChannel* channel = tuner_manager->get_channel_impl(tuner_id);
+        if (channel) {
+            channel->set_enabled(enabled);
+
+            // Update status in tuner list
+            if (enabled) {
+                // Restore the user's volume setting, respecting mute state
+                auto mute_it = channel_muted.find(tuner_id);
+                bool muted = (mute_it != channel_muted.end()) ? mute_it->second : false;
+                auto vol_it = channel_volumes.find(tuner_id);
+                float channel_vol = (vol_it != channel_volumes.end()) ? vol_it->second / 100.0f : 1.0f;
+
+                if (!muted) {
+                    float final_gain = d_main_gain_linear * channel_vol;
+                    channel->set_audio_gain(final_gain);
+                } else {
+                    channel->set_audio_gain(0.0f);
+                }
+
+                // Determine correct status based on DSP state and bypass
+                TunerStatus status;
+                bool running = tuner_manager->is_running();
+                bool bypassed = channel->is_bypassed();
+                if (!running) {
+                    status = TunerStatus::Stopped;
+                } else if (bypassed) {
+                    status = TunerStatus::Bypassed;
+                } else {
+                    status = TunerStatus::Running;
+                }
+                tuner_list_widget->update_tuner_status(tuner_id, status);
+            }
+            // When disabling, the TunerRowWidget already sets status to Disabled
+        }
+    }
+}
+
+void MainWindow::onTunerNameChanged(int tuner_id, const QString& name)
+{
+
+    // Update the marker name on the plotter
+    ui->plotter->setTunerMarkerName(tuner_id, name);
+}
+
+void MainWindow::onTunerTypeChanged(int tuner_id, ReceiverType type)
+{
+
+    if (!tuner_manager) {
+        qWarning() << "onTunerTypeChanged: No tuner manager available";
+        return;
+    }
+
+    ReceiverChannel* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel) {
+        qWarning() << "onTunerTypeChanged: Channel" << tuner_id << "not found";
+        return;
+    }
+
+    // Get rates needed for backend creation
+    double quad_rate = channel->get_quad_rate();
+    int audio_rate = 48000;  // Standard audio rate
+
+    // Create new backend of the requested type
+    auto backend = ReceiverBackendFactory::create(type, quad_rate, audio_rate);
+    if (!backend) {
+        qWarning() << "onTunerTypeChanged: Failed to create backend for type" << static_cast<int>(type);
+        return;
+    }
+
+    // Switch to the new backend
+    channel->set_backend(std::move(backend));
+
+    // Update filter width based on mode
+    int filter_low = -6250;   // Default NFM
+    int filter_high = 6250;
+
+    switch (type) {
+    case ReceiverType::ANALOG_NFM:
+        filter_low = -6250;
+        filter_high = 6250;
+        break;
+    case ReceiverType::ANALOG_AM:
+    case ReceiverType::ANALOG_AMSYNC:
+        filter_low = -5000;
+        filter_high = 5000;
+        break;
+    case ReceiverType::ANALOG_WFM_MONO:
+    case ReceiverType::ANALOG_WFM_STEREO:
+    case ReceiverType::ANALOG_WFM_STEREO_OIRT:
+        filter_low = -80000;
+        filter_high = 80000;
+        break;
+    case ReceiverType::ANALOG_USB:
+        filter_low = 0;
+        filter_high = 3000;
+        break;
+    case ReceiverType::ANALOG_LSB:
+        filter_low = -3000;
+        filter_high = 0;
+        break;
+    case ReceiverType::ANALOG_CW_U:
+        filter_low = -100;
+        filter_high = 900;
+        break;
+    case ReceiverType::ANALOG_CW_L:
+        filter_low = -900;
+        filter_high = 100;
+        break;
+    default:
+        break;
+    }
+
+    channel->set_filter_width(filter_low, filter_high);
+
+    // Update plotter marker with new filter width
+    ui->plotter->updateTunerFilter(tuner_id, filter_low, filter_high);
+
+}
+
+void MainWindow::onTunerColorChanged(int tuner_id, const QColor& color)
+{
+
+    // Update the marker color on the plotter
+    ui->plotter->setTunerMarkerColor(tuner_id, color);
+}
+
+void MainWindow::onTunerAlphaChanged(int tuner_id, int alpha)
+{
+
+    // Update the marker alpha on the plotter
+    ui->plotter->setTunerMarkerAlpha(tuner_id, alpha);
+}
+
+void MainWindow::onTunerVolumeChanged(int tuner_id, int volume)
+{
+
+    // Store the channel volume
+    channel_volumes[tuner_id] = volume;
+
+    if (!tuner_manager)
+    {
+        return;
+    }
+
+    auto* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+    {
+        return;
+    }
+
+    bool enabled = channel->is_enabled();
+    bool bypassed = channel->is_bypassed();
+
+    // Only apply gain if tuner is enabled, not bypassed, and not muted
+    if (enabled && !bypassed) {
+        // Check if channel is muted
+        auto it = channel_muted.find(tuner_id);
+        bool muted = (it != channel_muted.end()) ? it->second : false;
+        if (!muted) {
+            // Apply combined gain (main * channel)
+            float channel_vol = volume / 100.0f;
+            float final_gain = d_main_gain_linear * channel_vol;
+            channel->set_audio_gain(final_gain);
+        }
+    }
+    // Disabled or bypassed tuners stay muted
+}
+
+void MainWindow::onTunerMuteToggled(int tuner_id, bool muted)
+{
+
+    // Store the mute state
+    channel_muted[tuner_id] = muted;
+
+    if (!tuner_manager)
+    {
+        return;
+    }
+
+    auto* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+    {
+        return;
+    }
+
+    if (muted) {
+        // Mute - set gain to 0
+        channel->set_audio_gain(0.0f);
+    } else {
+        bool enabled = channel->is_enabled();
+        bool bypassed = channel->is_bypassed();
+        // Unmute - restore volume if enabled and not bypassed
+        if (enabled && !bypassed) {
+            auto it = channel_volumes.find(tuner_id);
+            float channel_vol = (it != channel_volumes.end()) ? it->second / 100.0f : 1.0f;
+            float final_gain = d_main_gain_linear * channel_vol;
+            channel->set_audio_gain(final_gain);
+        }
+    }
+}
+
+void MainWindow::onTunerRecordingToggled(int tuner_id, bool recording)
+{
+
+    if (!tuner_manager)
+        return;
+
+    auto* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+        return;
+
+    if (recording) {
+        // Get global and per-tuner recording config
+        const auto& config = tuner_manager->getRecordingConfig();
+        const auto tunerConfig = tuner_manager->getTunerRecordingConfig(tuner_id);
+
+        // Build base filename params
+        FilenameParams params;
+        params.timestamp = QDateTime::currentDateTime();
+        params.frequency_hz = channel->get_filter_offset() + tuner_manager->get_rf_freq();
+        // Get actual mode from channel
+        ReceiverChannel::rx_demod demod = channel->get_demod();
+        switch (demod) {
+            case ReceiverChannel::RX_DEMOD_OFF: params.mode = "Off"; break;
+            case ReceiverChannel::RX_DEMOD_AM: params.mode = "AM"; break;
+            case ReceiverChannel::RX_DEMOD_AMSYNC: params.mode = "AM-Sync"; break;
+            case ReceiverChannel::RX_DEMOD_NFM: params.mode = "NFM"; break;
+            case ReceiverChannel::RX_DEMOD_WFM_M: params.mode = "WFM-Mono"; break;
+            case ReceiverChannel::RX_DEMOD_WFM_S: params.mode = "WFM-Stereo"; break;
+            case ReceiverChannel::RX_DEMOD_WFM_S_OIRT: params.mode = "WFM-OIRT"; break;
+            case ReceiverChannel::RX_DEMOD_SSB: params.mode = "SSB"; break;
+            case ReceiverChannel::RX_DEMOD_NONE: params.mode = "Raw"; break;
+            default: params.mode = "Unknown"; break;
+        }
+        params.tuner_id = tuner_id;
+        params.tuner_name = QString::fromStdString(channel->get_channel_name());
+        if (params.tuner_name.isEmpty()) {
+            params.tuner_name = QString("Tuner%1").arg(tuner_id);
+        }
+
+        // Ensure folder exists
+        FilenameTemplate::ensureFolder(config.recording_folder);
+
+        bool anyStarted = false;
+
+        // Start IQ recording if enabled
+        if (tunerConfig.record_iq) {
+            params.type = "iq";
+            // Get sample rate based on tap point
+            if (config.iq_tap_point == IqTapPoint::AFTER_FILTER) {
+                params.sample_rate = channel->get_backend() ? channel->get_backend()->get_filtered_iq_rate() : 96000;
+            } else {
+                params.sample_rate = channel->get_quad_rate();
+            }
+
+            QString iqPath = FilenameTemplate::buildPath(
+                config.recording_folder,
+                config.filename_template,
+                params,
+                ""
+            );
+
+            // Apply IQ settings
+            channel->set_iq_tap_point(config.iq_tap_point);
+            channel->set_iq_recording_format(config.iq_format);
+            channel->set_iq_recording_center_freq(params.frequency_hz);
+            channel->set_sigmf_config(config.sigmf);
+            channel->set_iq_recording_mode(tunerConfig.iq_mode);
+            channel->set_iq_split_minutes(config.auto_split_minutes);
+            channel->set_iq_pre_buffer_ms(config.squelch_config.pre_buffer_ms);
+
+            if (channel->start_iq_recording(iqPath) == ReceiverChannel::STATUS_OK) {
+                anyStarted = true;
+            } else {
+                qWarning() << "Failed to start IQ recording for tuner" << tuner_id;
+            }
+        }
+
+        // Start audio recording if enabled
+        if (tunerConfig.record_audio) {
+            params.type = "audio";
+            params.sample_rate = 48000;
+
+            QString audioPath = FilenameTemplate::buildPath(
+                config.recording_folder,
+                config.filename_template,
+                params,
+                ""
+            );
+
+            channel->set_audio_recording_format(config.audio_format);
+            channel->set_audio_recording_wav_format(config.wav_sample_format);
+            channel->set_audio_recording_mode(tunerConfig.audio_mode);
+            channel->set_audio_squelch_config(
+                tunerConfig.use_custom_squelch_config ? tunerConfig.squelch_config : config.squelch_config
+            );
+            channel->set_audio_split_minutes(config.auto_split_minutes);
+
+            if (channel->start_new_audio_recording(audioPath) == ReceiverChannel::STATUS_OK) {
+                anyStarted = true;
+            } else {
+                qWarning() << "Failed to start audio recording for tuner" << tuner_id;
+            }
+        }
+
+        // Update UI if nothing started
+        if (!anyStarted && tuner_list_widget) {
+            tuner_list_widget->update_tuner_recording(tuner_id, false);
+        }
+    } else {
+        // Stop all recording
+        channel->stop_iq_recording();
+        channel->stop_new_audio_recording();
+    }
+}
+
+void MainWindow::onTunerCenterRequested(int tuner_id)
+{
+
+    if (!tuner_manager || !tuner_list_widget)
+        return;
+
+    // Get tuner status and frequency from the UI widget (works even before channels exist)
+    TunerStatus row_status = tuner_list_widget->getTunerStatus(tuner_id);
+    qint64 tuner_freq = tuner_list_widget->getTunerFrequency(tuner_id);
+
+    // Check if tuner is out of SDR range (bypassed or disabled due to being out of range)
+    ReceiverChannel* channel = tuner_manager->get_channel_impl(tuner_id);
+    bool is_out_of_range = (row_status == TunerStatus::Bypassed) ||
+                           (row_status == TunerStatus::Disabled) ||
+                           (channel && channel->is_bypassed());
+
+    if (is_out_of_range && tuner_freq > 0) {
+
+        // Retune SDR to the tuner's frequency
+        setNewFrequency(tuner_freq);
+
+        // Re-fetch channel after retune
+        channel = tuner_manager->get_channel_impl(tuner_id);
+    }
+
+    // If still no channel, we can't center
+    if (!channel)
+        return;
+
+    // Get tuner offset and center the FFT view on it (no zoom change)
+    qint64 fft_offset = (qint64)channel->get_freq_offset();
+    ui->plotter->setFftCenterFreq(fft_offset);
+}
+
+void MainWindow::onTunerZoomRequested(int tuner_id)
+{
+
+    if (!tuner_manager || !tuner_list_widget)
+        return;
+
+    // Get tuner info
+    TunerStatus row_status = tuner_list_widget->getTunerStatus(tuner_id);
+    qint64 tuner_freq = tuner_list_widget->getTunerFrequency(tuner_id);
+
+    // Check if tuner is out of range and retune if needed
+    ReceiverChannel* channel = tuner_manager->get_channel_impl(tuner_id);
+    bool is_out_of_range = (row_status == TunerStatus::Bypassed) ||
+                           (row_status == TunerStatus::Disabled) ||
+                           (channel && channel->is_bypassed());
+
+    if (is_out_of_range && tuner_freq > 0) {
+        setNewFrequency(tuner_freq);
+        channel = tuner_manager->get_channel_impl(tuner_id);
+    }
+
+    if (!channel)
+        return;
+
+    // Use a default channel width (10 kHz) for zoom calculation
+    // This works well for most narrowband modes
+    int channel_width = 10000;
+
+    // Get current span and sample rate from plotter
+    qint64 current_span = ui->plotter->getSpan();
+    qint64 sample_rate = (qint64)ui->plotter->getSampleRate();
+
+    // Define zoom levels as span widths (in Hz)
+    // Channel fit (2x channel width), then progressively wider views
+    QVector<qint64> zoom_spans;
+    zoom_spans << qMax(channel_width * 2, 20000);   // Fit channel (min 20 kHz)
+    zoom_spans << 50000;                             // 50 kHz
+    zoom_spans << 100000;                            // 100 kHz
+    zoom_spans << 250000;                            // 250 kHz
+    zoom_spans << 500000;                            // 500 kHz
+    zoom_spans << 1000000;                           // 1 MHz
+    zoom_spans << sample_rate;                       // Full bandwidth
+
+    // Find closest zoom level and go to next
+    int next_idx = 0;
+    for (int i = 0; i < zoom_spans.size(); i++) {
+        if (current_span <= zoom_spans[i] * 1.1) {  // Within 10% of this level
+            next_idx = (i + 1) % zoom_spans.size();  // Cycle to next
+            break;
+        }
+        next_idx = 0;  // If current span > all levels, start from beginning
+    }
+
+    qint64 new_span = zoom_spans[next_idx];
+
+    // Center on channel and set new span
+    qint64 fft_offset = (qint64)channel->get_freq_offset();
+    ui->plotter->setFftCenterFreq(fft_offset);
+    ui->plotter->setSpanFreq(new_span);
+}
+
+void MainWindow::onTunerFrequencyChanged(int tuner_id, qint64 freq)
+{
+
+    if (!tuner_manager)
+        return;
+
+    ReceiverChannel* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+        return;
+
+    // Calculate new offset from absolute frequency
+    // freq is in display coordinates (includes LNB offset)
+    // rf_freq is hardware frequency
+    // offset = display_freq - hardware_rf - lnb_lo
+    qint64 rf_freq = (qint64)tuner_manager->get_rf_freq();
+    qint64 new_offset = freq - rf_freq - d_lnb_lo;
+
+    // Update channel offset
+    channel->set_freq_offset(new_offset);
+
+    // Calculate if tuner is within valid bandwidth and update bypass state
+    double sample_rate = tuner_manager->get_input_rate();
+    qint64 max_offset = (qint64)(sample_rate / 2.0 * 0.95);  // 95% of half sample rate
+    bool in_range = std::abs(new_offset) <= max_offset;
+    channel->set_bypassed(!in_range);
+
+    // Update the FFT marker visibility
+    ui->plotter->updateTunerFrequency(tuner_id, freq);
+    ui->plotter->setTunerMarkerEnabled(tuner_id, in_range);
+
+    // Update bypass status in tuner list and handle audio
+    if (tuner_manager->is_running()) {
+        TunerStatus status;
+        if (!channel->is_enabled()) {
+            status = TunerStatus::Disabled;
+            channel->set_audio_gain(0.0f);
+        } else if (!in_range) {
+            status = TunerStatus::Bypassed;
+            channel->set_audio_gain(0.0f);  // Mute when bypassed
+        } else {
+            status = TunerStatus::Running;
+            // Restore audio if not muted
+            auto mute_it = channel_muted.find(tuner_id);
+            bool is_muted = (mute_it != channel_muted.end() && mute_it->second);
+            if (!is_muted) {
+                auto vol_it = channel_volumes.find(tuner_id);
+                // channel_volumes stores integer percentage (0-100), convert to float (0.0-1.0)
+                float vol = (vol_it != channel_volumes.end()) ? vol_it->second / 100.0f : 0.18f;
+                channel->set_audio_gain(vol);
+            }
+        }
+        if (tuner_list_widget) {
+            tuner_list_widget->update_tuner_status(tuner_id, status);
+        }
+    }
+
+    // Don't update main freqCtrl - it shows SDR center frequency, not tuner frequency
+}
+
+void MainWindow::onTunerFilterWidthChanged(int tuner_id, int filter_low, int filter_high)
+{
+
+    if (!tuner_manager)
+        return;
+
+    ReceiverChannel* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+        return;
+
+    // Set filter on the channel
+    channel->set_filter((double)filter_low, (double)filter_high, receiver::FILTER_SHAPE_NORMAL);
+
+    // Update the FFT marker filter display
+    ui->plotter->updateTunerFilter(tuner_id, filter_low, filter_high);
+}
+
+/**
+ * @brief Tuner squelch level changed.
+ * @param tuner_id The tuner ID.
+ * @param level_db The new squelch level in dBFS.
+ */
+void MainWindow::onTunerSquelchChanged(int tuner_id, double level_db)
+{
+
+    if (!tuner_manager)
+        return;
+
+    auto* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+        return;
+
+    channel->set_sql_level(level_db);
+}
+
+/**
+ * @brief Tuner auto squelch requested.
+ * @param tuner_id The tuner ID.
+ */
+void MainWindow::onTunerAutoSquelchRequested(int tuner_id)
+{
+
+    if (!tuner_manager)
+        return;
+
+    auto* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+        return;
+
+    // Get current signal level and add 3dB headroom
+    float signal_level = channel->get_signal_level();
+    double level = (double)signal_level + 3.0;
+
+    // Avoid setting to 0 dBFS
+    if (level > -10.0) {
+        level = channel->get_sql_level();
+    }
+
+    channel->set_sql_level(level);
+
+    // Update the UI widget
+    auto it = tuner_list_widget->findChildren<TunerRowWidget*>();
+    for (auto* row : it) {
+        if (row->tuner_id() == tuner_id) {
+            row->setSquelch(level);
+            break;
+        }
+    }
+}
+
+/**
+ * @brief Tuner filter preset changed.
+ * @param tuner_id The tuner ID.
+ * @param preset The filter preset (0=Wide, 1=Normal, 2=Narrow, 3=User).
+ */
+void MainWindow::onTunerFilterPresetChanged(int tuner_id, int preset)
+{
+
+    if (!tuner_manager)
+        return;
+
+    auto* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+        return;
+
+    // Filter preset table for NFM mode (most common for tuners)
+    // Format: {lo, hi} in Hz relative to carrier
+    static const int nfm_filter_presets[3][2] = {
+        {-10000, 10000},  // Wide
+        {-5000, 5000},    // Normal
+        {-2500, 2500}     // Narrow
+    };
+
+    if (preset >= 0 && preset < 3) {
+        int lo = nfm_filter_presets[preset][0];
+        int hi = nfm_filter_presets[preset][1];
+        channel->set_filter(lo, hi, 500.0);  // 500Hz transition width
+
+        // Update FFT plotter with new filter width
+        ui->plotter->updateTunerFilter(tuner_id, lo, hi);
+    }
+}
+
+/**
+ * @brief Tuner AGC preset changed.
+ * @param tuner_id The tuner ID.
+ * @param preset The AGC preset (0=Fast, 1=Medium, 2=Slow, 3=User, 4=Off).
+ */
+void MainWindow::onTunerAgcPresetChanged(int tuner_id, int preset)
+{
+
+    if (!tuner_manager)
+        return;
+
+    auto* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+        return;
+
+    // AGC preset values
+    // Preset: 0=Fast, 1=Medium, 2=Slow, 3=User, 4=Off
+    switch (preset) {
+    case 0:  // Fast
+        channel->set_agc_on(true);
+        channel->set_agc_decay(100);
+        channel->set_agc_slope(0);
+        break;
+    case 1:  // Medium
+        channel->set_agc_on(true);
+        channel->set_agc_decay(500);
+        channel->set_agc_slope(0);
+        break;
+    case 2:  // Slow
+        channel->set_agc_on(true);
+        channel->set_agc_decay(2000);
+        channel->set_agc_slope(0);
+        break;
+    case 3:  // User - keep current settings, just ensure AGC is on
+        channel->set_agc_on(true);
+        break;
+    case 4:  // Off
+        channel->set_agc_on(false);
+        break;
+    }
+}
+
+/**
+ * @brief Tuner noise blanker state changed.
+ * @param tuner_id The tuner ID.
+ * @param state The NB state (0=Off, 1=NB1, 2=NB2, 3=Both).
+ */
+void MainWindow::onTunerNbStateChanged(int tuner_id, int state)
+{
+
+    if (!tuner_manager)
+        return;
+
+    auto* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+        return;
+
+    // NB state: 0=Off, 1=NB1, 2=NB2, 3=Both
+    bool nb1_on = (state == 1) || (state == 3);
+    bool nb2_on = (state == 2) || (state == 3);
+
+    channel->set_nb_on(1, nb1_on);
+    channel->set_nb_on(2, nb2_on);
+}
+
+/**
+ * @brief Tuner filter shape changed.
+ * @param tuner_id The tuner ID.
+ * @param shape The filter shape (0=Soft, 1=Normal, 2=Sharp).
+ */
+void MainWindow::onTunerFilterShapeChanged(int tuner_id, int shape)
+{
+
+    if (!tuner_manager)
+        return;
+
+    auto* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+        return;
+
+    // Filter shape is applied through the backend
+    // The IReceiverBackend doesn't have a direct set_filter_shape method,
+    // so we need to re-apply the filter with different transition widths:
+    // Soft: wide transition (1000Hz), Normal: medium (500Hz), Sharp: narrow (100Hz)
+    // For now, just log - full implementation would require storing current filter values
+}
+
+/**
+ * @brief Tuner NB1 threshold changed.
+ * @param tuner_id The tuner ID.
+ * @param threshold The threshold (0.0 to 1.0).
+ */
+void MainWindow::onTunerNb1ThresholdChanged(int tuner_id, float threshold)
+{
+
+    if (!tuner_manager)
+        return;
+
+    auto* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+        return;
+
+    channel->set_nb_threshold(1, threshold);
+}
+
+/**
+ * @brief Tuner NB2 threshold changed.
+ * @param tuner_id The tuner ID.
+ * @param threshold The threshold (0.0 to 1.0).
+ */
+void MainWindow::onTunerNb2ThresholdChanged(int tuner_id, float threshold)
+{
+
+    if (!tuner_manager)
+        return;
+
+    auto* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+        return;
+
+    channel->set_nb_threshold(2, threshold);
+}
+
+/**
+ * @brief Tuner AGC hang setting changed.
+ * @param tuner_id The tuner ID.
+ * @param use_hang Whether to use hang mode.
+ */
+void MainWindow::onTunerAgcHangChanged(int tuner_id, bool use_hang)
+{
+
+    if (!tuner_manager)
+        return;
+
+    auto* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+        return;
+
+    channel->set_agc_hang(use_hang);
+}
+
+/**
+ * @brief Tuner AGC threshold changed.
+ * @param tuner_id The tuner ID.
+ * @param threshold The threshold in dB.
+ */
+void MainWindow::onTunerAgcThresholdChanged(int tuner_id, int threshold)
+{
+
+    if (!tuner_manager)
+        return;
+
+    auto* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+        return;
+
+    channel->set_agc_threshold(threshold);
+}
+
+/**
+ * @brief Tuner AGC decay changed.
+ * @param tuner_id The tuner ID.
+ * @param decay_ms The decay time in milliseconds.
+ */
+void MainWindow::onTunerAgcDecayChanged(int tuner_id, int decay_ms)
+{
+
+    if (!tuner_manager)
+        return;
+
+    auto* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+        return;
+
+    channel->set_agc_decay(decay_ms);
+}
+
+/**
+ * @brief Tuner AGC gain changed.
+ * @param tuner_id The tuner ID.
+ * @param gain The manual gain value.
+ */
+void MainWindow::onTunerAgcGainChanged(int tuner_id, int gain)
+{
+
+    if (!tuner_manager)
+        return;
+
+    auto* channel = tuner_manager->get_channel_impl(tuner_id);
+    if (!channel)
+        return;
+
+    channel->set_agc_manual_gain(gain);
 }

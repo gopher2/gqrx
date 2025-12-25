@@ -4,6 +4,7 @@
  *           https://gqrx.dk/
  *
  * Copyright 2013 Alexandru Csete OZ9AEC.
+ * Copyright 2025 David Kierzkowski K9DPD
  *
  * Gqrx is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,9 +32,13 @@
 #include <QTcpSocket>
 #include <QtNetwork>
 #include <set>
+#include <memory>
 
 /* For gain_t and gain_list_t */
 #include "qtgui/dockinputctl.h"
+
+// Forward declaration for TunerManager
+class TunerManager;
 
 /*! \brief Simple TCP server for remote control.
  *
@@ -49,6 +54,15 @@
  *
  *   client:  f\n                 # get frequency
  *     gqrx:  144500000\n         # gqrx replies with frequency in Hz
+ *
+ * Multi-tuner extensions:
+ *   client:  F 0 144500000\n     # set tuner 0 frequency
+ *   client:  f 1\n               # get tuner 1 frequency
+ *   client:  TUNER_ADD\n         # add new tuner, returns tuner index
+ *   client:  TUNER_REMOVE 2\n    # remove tuner 2
+ *   client:  TUNER_LIST\n        # list all active tuners
+ *
+ * For backward compatibility, commands without tuner index operate on tuner 0.
  *
  * We also have some gqrx specific commands:
  *
@@ -83,6 +97,9 @@ public:
     }
     void setReceiverStatus(bool enabled);
     void setGainStages(gain_list_t &gain_list);
+
+    // Multi-tuner support
+    void setTunerManager(std::shared_ptr<TunerManager> tuner_manager);
 
 public slots:
     void setNewFrequency(qint64 freq);
@@ -156,9 +173,17 @@ private:
     gain_list_t gains;             /*!< Possible and current gain settings */
     bool        is_audio_muted;
 
+    // Multi-tuner support
+    std::shared_ptr<TunerManager> tuner_manager_;
+    int         default_tuner_index_;  /*!< Default tuner for backward compatibility */
+
     void        setNewRemoteFreq(qint64 freq);
     int         modeStrToInt(QString mode_str);
     QString     intToModeStr(int mode);
+
+    // Helper functions for multi-tuner support
+    int         parseTunerIndex(const QStringList& cmdlist, int default_index = 0);
+    bool        isValidTunerIndex(int tuner_index);
 
     /* RC commands */
     QString     cmd_get_freq() const;
@@ -179,6 +204,15 @@ private:
     QString     cmd_LOS();
     QString     cmd_lnb_lo(QStringList cmdlist);
     QString     cmd_dump_state() const;
+
+    // Multi-tuner commands
+    QString     cmd_get_freq_multi(QStringList cmdlist) const;
+    QString     cmd_set_freq_multi(QStringList cmdlist);
+    QString     cmd_get_mode_multi(QStringList cmdlist);
+    QString     cmd_set_mode_multi(QStringList cmdlist);
+    QString     cmd_tuner_add(QStringList cmdlist);
+    QString     cmd_tuner_remove(QStringList cmdlist);
+    QString     cmd_tuner_list();
 };
 
 #endif // REMOTE_CONTROL_H
