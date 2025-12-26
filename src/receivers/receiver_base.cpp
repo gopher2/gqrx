@@ -4,6 +4,7 @@
  *           https://gqrx.dk/
  *
  * Copyright 2012 Alexandru Csete OZ9AEC.
+ * Copyright 2025 David Kierzkowski K9DPD
  *
  * Gqrx is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -26,13 +27,15 @@
 
 static const int MIN_IN = 1;  /* Minimum number of input streams. */
 static const int MAX_IN = 1;  /* Maximum number of input streams. */
-static const int MIN_OUT = 2; /* Minimum number of output streams. */
-static const int MAX_OUT = 2; /* Maximum number of output streams. */
+static const int MIN_OUT = 3; /* Minimum number of output streams (2 audio + 1 IQ tap). */
+static const int MAX_OUT = 3; /* Maximum number of output streams (2 audio + 1 IQ tap). */
 
 receiver_base_cf::receiver_base_cf(std::string src_name)
     : gr::hier_block2 (src_name,
                       gr::io_signature::make (MIN_IN, MAX_IN, sizeof(gr_complex)),
-                      gr::io_signature::make (MIN_OUT, MAX_OUT, sizeof(float)))
+                      // Variable signature: outputs 0,1 are float (audio), output 2 is gr_complex (IQ tap)
+                      gr::io_signature::makev (MIN_OUT, MAX_OUT,
+                          std::vector<int>{ sizeof(float), sizeof(float), sizeof(gr_complex) }))
 {
 
 }

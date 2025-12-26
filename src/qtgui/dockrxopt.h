@@ -4,6 +4,7 @@
  *           https://gqrx.dk/
  *
  * Copyright 2011-2013 Alexandru Csete OZ9AEC.
+ * Copyright 2025 David Kierzkowski K9DPD
  *
  * Gqrx is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,6 +29,10 @@
 #include "qtgui/agc_options.h"
 #include "qtgui/demod_options.h"
 #include "qtgui/nb_options.h"
+
+// Forward declarations
+class TunerManager;
+class ReceiverChannel;
 
 #define FILTER_PRESET_WIDE      0
 #define FILTER_PRESET_NORMAL    1
@@ -101,7 +106,7 @@ public:
     void setInvertScrolling(bool enabled);
 
     int  currentDemod() const;
-    QString currentDemodAsString();
+    QString currentDemodAsString() const;
 
     float currentMaxdev() const;
     double currentEmph() const;
@@ -121,16 +126,27 @@ public:
     static int GetEnumForModulationString(QString param);
     static bool IsModulationValid(QString strModulation);
 
+    // Multi-tuner support
+    void setTunerManager(TunerManager* manager);
+    TunerManager* tunerManager() const { return d_tuner_manager; }
+    void setTunerId(int tuner_id);
+    int tunerId() const { return d_tuner_id; }
+    void setTunerColor(const QColor& color);
+
 public slots:
     void setRxFreq(qint64 freq_hz);
     void setCurrentDemod(int demod);
     void setFilterOffset(qint64 freq_hz);
     void setSquelchLevel(double level);
 
+    // Multi-tuner: update UI when active tuner changes
+    void onActiveTunerChanged(int tuner_id);
+
 private:
     void updateHwFreq();
     void updateDemodOptPage(int demod);
     unsigned int filterIdxFromLoHi(int lo, int hi) const;
+    void updateUiFromTuner(ReceiverChannel* tuner);  // Update UI without emitting signals
 
     void modeOffShortcut();
     void modeRawShortcut();
@@ -252,6 +268,11 @@ private:
     bool agc_is_on;
 
     qint64 hw_freq_hz;   /** Current PLL frequency in Hz. */
+
+    // Multi-tuner support
+    TunerManager* d_tuner_manager;  /** Tuner manager for multi-tuner mode */
+    int d_tuner_id;  /** Specific tuner ID this dock controls (-1 = active tuner) */
+    bool d_updating_from_tuner;     /** Flag to prevent signal feedback loops */
 };
 
 #endif // DOCKRXOPT_H

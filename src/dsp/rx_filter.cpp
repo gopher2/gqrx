@@ -4,6 +4,7 @@
  *           https://gqrx.dk/
  *
  * Copyright 2011 Alexandru Csete OZ9AEC.
+ * Copyright 2025 David Kierzkowski K9DPD
  *
  * Gqrx is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,10 +21,8 @@
  * the Free Software Foundation, Inc., 51 Franklin Street,
  * Boston, MA 02110-1301, USA.
  */
-#include <cmath>
 #include <gnuradio/io_signature.h>
 #include <gnuradio/filter/firdes.h>
-#include <iostream>
 #include <QDebug>
 #include "dsp/rx_filter.h"
 
@@ -53,9 +52,17 @@ rx_filter::rx_filter(double sample_rate, double low, double high, double trans_w
       d_cw_offset(0)
 {
     if (low < -0.95*sample_rate/2.0)
+    {
         d_low = -0.95*sample_rate/2.0;
+    }
     if (high > 0.95*sample_rate/2.0)
+    {
         d_high = 0.95*sample_rate/2.0;
+    }
+
+    // Enforce minimum transition width to keep tap count manageable
+    double min_trans_width = d_sample_rate / 125.0;
+    d_trans_width = std::max(d_trans_width, min_trans_width);
 
     /* generate taps */
     d_taps = gr::filter::firdes::complex_band_pass(1.0, d_sample_rate, d_low, d_high, d_trans_width);
@@ -75,19 +82,37 @@ rx_filter::~rx_filter ()
 
 void rx_filter::set_param(double low, double high, double trans_width)
 {
-    d_trans_width = trans_width;
     d_low         = low;
     d_high        = high;
 
     if (d_low < -0.95*d_sample_rate/2.0)
-        d_low = -0.95*d_sample_rate/2.0;
+    {
+        double limit = -0.95*d_sample_rate/2.0;
+        d_low = limit;
+    }
     if (d_high > 0.95*d_sample_rate/2.0)
-        d_high = 0.95*d_sample_rate/2.0;
+    {
+        double limit = 0.95*d_sample_rate/2.0;
+        d_high = limit;
+    }
+
+    // Enforce minimum transition width to keep tap count manageable
+    // Formula: taps ≈ 4 * sample_rate / trans_width
+    // To keep taps under ~500: min_tw = sample_rate / 125
+    double min_trans_width = d_sample_rate / 125.0;
+    d_trans_width = std::max(trans_width, min_trans_width);
+
+    if (d_trans_width != trans_width)
+    {
+    }
 
     /* generate new taps */
+    double effective_low = d_low + d_cw_offset;
+    double effective_high = d_high + d_cw_offset;
+
     d_taps = gr::filter::firdes::complex_band_pass(1.0, d_sample_rate,
-                                                   d_low + d_cw_offset,
-                                                   d_high + d_cw_offset,
+                                                   effective_low,
+                                                   effective_high,
                                                    d_trans_width);
 
     qDebug() << "Generating taps for new filter   LO:" << d_low
@@ -129,6 +154,7 @@ rx_xlating_filter::rx_xlating_filter(double sample_rate, double center, double l
       d_high(high),
       d_trans_width(trans_width)
 {
+
     /* generate taps */
     d_taps = gr::filter::firdes::complex_band_pass(1.0, d_sample_rate, -d_high, -d_low, d_trans_width);
 
@@ -154,15 +180,19 @@ void rx_xlating_filter::set_offset(double center)
        opposite sign of selecting a center frequency.
     */
     d_center = -center;
+
     d_bpf->set_center_freq(d_center);
 }
 
 
 void rx_xlating_filter::set_param(double low, double high, double trans_width)
 {
-    d_trans_width = trans_width;
     d_low         = low;
     d_high        = high;
+
+    // Enforce minimum transition width to keep tap count manageable
+    double min_trans_width = d_sample_rate / 125.0;
+    d_trans_width = std::max(trans_width, min_trans_width);
 
     /* generate new taps */
     d_taps = gr::filter::firdes::complex_band_pass(1.0, d_sample_rate, -d_high, -d_low, d_trans_width);
@@ -173,6 +203,9 @@ void rx_xlating_filter::set_param(double low, double high, double trans_width)
 
 void rx_xlating_filter::set_param(double center, double low, double high, double trans_width)
 {
+
     set_offset(center);
+
     set_param(low, high, trans_width);
+
 }

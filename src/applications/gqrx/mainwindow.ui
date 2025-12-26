@@ -87,13 +87,148 @@
             <number>6</number>
            </property>
            <item>
+            <layout class="QHBoxLayout" name="leftStatsOuterLayout">
+             <property name="spacing">
+              <number>12</number>
+             </property>
+             <item>
+              <layout class="QVBoxLayout" name="leftStatsCol1">
+               <property name="spacing">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="cpuUsageLabel">
+                 <property name="minimumSize">
+                  <size>
+                   <width>80</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>CPU: 0%</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignLeft|Qt::AlignVCenter</set>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">QLabel { color: #6c6; font-size: 10px; font-weight: bold; }</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="fftRateLabel">
+                 <property name="minimumSize">
+                  <size>
+                   <width>80</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>FFT: 0 fps</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignLeft|Qt::AlignVCenter</set>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">QLabel { color: #6c6; font-size: 10px; font-weight: bold; }</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="dspStatusLabel">
+                 <property name="minimumSize">
+                  <size>
+                   <width>80</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>DSP: Stopped</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignLeft|Qt::AlignVCenter</set>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">QLabel { color: #c66; font-size: 10px; font-weight: bold; }</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QVBoxLayout" name="leftStatsCol2">
+               <property name="spacing">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="tunersActiveLabel">
+                 <property name="minimumSize">
+                  <size>
+                   <width>80</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Tuners: 0/0</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignLeft|Qt::AlignVCenter</set>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">QLabel { color: #69c; font-size: 10px; font-weight: bold; }</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="diskReadLabel">
+                 <property name="minimumSize">
+                  <size>
+                   <width>100</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Disk R: 0</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignLeft|Qt::AlignVCenter</set>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">QLabel { color: #888; font-size: 10px; font-weight: bold; }</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="diskWriteLabel">
+                 <property name="minimumSize">
+                  <size>
+                   <width>100</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Disk W: 0</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignLeft|Qt::AlignVCenter</set>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">QLabel { color: #888; font-size: 10px; font-weight: bold; }</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+            </layout>
+           </item>
+           <item>
             <spacer name="horizontalSpacer_7">
              <property name="orientation">
               <enum>Qt::Horizontal</enum>
              </property>
              <property name="sizeHint" stdset="0">
               <size>
-               <width>5</width>
+               <width>40</width>
                <height>15</height>
               </size>
              </property>
@@ -125,52 +260,171 @@
             </widget>
            </item>
            <item>
-            <spacer name="horizontalSpacer_4">
+            <spacer name="horizontalSpacer_8">
              <property name="orientation">
               <enum>Qt::Horizontal</enum>
              </property>
              <property name="sizeHint" stdset="0">
               <size>
-               <width>5</width>
+               <width>40</width>
                <height>15</height>
               </size>
              </property>
             </spacer>
            </item>
            <item>
-            <widget class="CMeter" name="sMeter">
-             <property name="sizePolicy">
-              <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-               <horstretch>0</horstretch>
-               <verstretch>0</verstretch>
-              </sizepolicy>
+            <layout class="QHBoxLayout" name="rightStatsOuterLayout">
+             <property name="spacing">
+              <number>12</number>
              </property>
-             <property name="minimumSize">
-              <size>
-               <width>150</width>
-               <height>40</height>
-              </size>
-             </property>
-             <property name="frameShape">
-              <enum>QFrame::StyledPanel</enum>
-             </property>
-             <property name="frameShadow">
-              <enum>QFrame::Raised</enum>
-             </property>
-            </widget>
-           </item>
-           <item>
-            <spacer name="horizontalSpacer_5">
-             <property name="orientation">
-              <enum>Qt::Horizontal</enum>
-             </property>
-             <property name="sizeHint" stdset="0">
-              <size>
-               <width>5</width>
-               <height>15</height>
-              </size>
-             </property>
-            </spacer>
+             <item>
+              <layout class="QVBoxLayout" name="rightStatsCol1">
+               <property name="spacing">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="sourceStatusLabel">
+                 <property name="minimumSize">
+                  <size>
+                   <width>120</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>INPUT: None</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignRight|Qt::AlignVCenter</set>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">QLabel { color: #9cf; font-size: 10px; font-weight: bold; }</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="sampleRateLabel">
+                 <property name="minimumSize">
+                  <size>
+                   <width>120</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>RATE: 0.00 MSPS</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignRight|Qt::AlignVCenter</set>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">QLabel { color: #9cf; font-size: 10px; font-weight: bold; }</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="decimBwLabel">
+                 <property name="minimumSize">
+                  <size>
+                   <width>120</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>BW: 0.00 MHz</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignRight|Qt::AlignVCenter</set>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">QLabel { color: #9cf; font-size: 10px; font-weight: bold; }</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <layout class="QVBoxLayout" name="rightStatsCol2">
+               <property name="spacing">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="fftSpanLabel">
+                 <property name="minimumSize">
+                  <size>
+                   <width>120</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>SPAN: 0.00 MHz</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignRight|Qt::AlignVCenter</set>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">QLabel { color: #fc9; font-size: 10px; font-weight: bold; }</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="fftLeftEdgeLabel">
+                 <property name="minimumSize">
+                  <size>
+                   <width>120</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>L: 0.000 MHz</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignRight|Qt::AlignVCenter</set>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">QLabel { color: #fc9; font-size: 10px; font-weight: bold; }</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="fftRightEdgeLabel">
+                 <property name="minimumSize">
+                  <size>
+                   <width>120</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>R: 0.000 MHz</string>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignRight|Qt::AlignVCenter</set>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">QLabel { color: #fc9; font-size: 10px; font-weight: bold; }</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </item>
+             <item>
+              <widget class="QLabel" name="lnbLoLabel">
+               <property name="minimumSize">
+                <size>
+                 <width>0</width>
+                 <height>0</height>
+                </size>
+               </property>
+               <property name="text">
+                <string></string>
+               </property>
+               <property name="alignment">
+                <set>Qt::AlignRight|Qt::AlignVCenter</set>
+               </property>
+               <property name="styleSheet">
+                <string notr="true">QLabel { color: #c9f; font-size: 10px; font-weight: bold; }</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
            </item>
           </layout>
          </item>
@@ -342,7 +596,7 @@
      </widget>
     </item>
     <item>
-     <widget class="CPlotter" name="plotter">
+     <widget class="MultiTunerPlotter" name="plotter">
       <property name="sizePolicy">
        <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
         <horstretch>0</horstretch>
@@ -742,15 +996,9 @@
    <container>1</container>
   </customwidget>
   <customwidget>
-   <class>CPlotter</class>
+   <class>MultiTunerPlotter</class>
    <extends>QFrame</extends>
-   <header>qtgui/plotter.h</header>
-   <container>1</container>
-  </customwidget>
-  <customwidget>
-   <class>CMeter</class>
-   <extends>QFrame</extends>
-   <header>qtgui/meter.h</header>
+   <header>qtgui/multi_tuner_plotter.h</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

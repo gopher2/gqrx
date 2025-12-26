@@ -7,12 +7,16 @@ add_source_files(SRCS_LIST
 	gqrx/mainwindow.h
 	gqrx/receiver.cpp
 	gqrx/receiver.h
+	gqrx/receiver_channel.cpp
+	gqrx/receiver_channel.h
 	gqrx/remote_control_settings.cpp
 	gqrx/remote_control_settings.h
 	gqrx/remote_control.cpp
 	gqrx/remote_control.h
 	gqrx/recentconfig.cpp
 	gqrx/recentconfig.h
+	gqrx/tuner_manager.cpp
+	gqrx/tuner_manager.h
 	gqrx/file_resources.cpp
 )
 

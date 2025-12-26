@@ -1,4 +1,10 @@
 /* -*- c++ -*- */
+/*
+ * Copyright 2010 Moe Wheatley. All rights reserved.
+ * Copyright 2011-2013 Alexandru Csete OZ9AEC
+ * Copyright 2025 David Kierzkowski K9DPD
+ * Released under the "Simplified BSD License"
+ */
 #ifndef PLOTTER_H
 #define PLOTTER_H
 
@@ -48,9 +54,12 @@ public:
     void setNewFftData(const float *fftData, int size);
 
     void setCenterFreq(quint64 f);
+    quint64 getCenterFreq() const { return m_CenterFreq; }
     void setFreqUnits(qint32 unit) { m_FreqUnits = unit; }
 
-    void setDemodCenterFreq(quint64 f) { m_DemodCenterFreq = f; }
+    void setDemodCenterFreq(quint64 f) {
+        m_DemodCenterFreq = f;
+    }
 
     /*! \brief Move the filter to freq_hz from center. */
     void setFilterOffset(qint64 freq_hz)
@@ -97,6 +106,8 @@ public:
         }
         updateOverlay();
     }
+
+    qint64 getSpan() const { return m_Span; }
 
     void setVdivDelta(int delta) { m_VdivDelta = delta; }
 
@@ -209,6 +220,13 @@ protected:
     void mouseReleaseEvent(QMouseEvent * event) override;
     void wheelEvent( QWheelEvent * event ) override;
 
+protected:
+    int         xFromFreq(qint64 freq) const;
+    qint64      freqFromX(int x) const;
+    int         getFftHeight() const { return qRound((qreal)m_Percent2DScreen / 100.0 * (qreal)height()); }
+    int         getBookmarkTagsBottomAtX(int xLeft, int xRight) const;
+    void        zoomStepX(float factor, int x);
+
 private:
     enum eCapturetype {
         NOCAP,
@@ -224,9 +242,6 @@ private:
 
     void        drawOverlay();
     void        makeFrequencyStrs();
-    int         xFromFreq(qint64 freq);
-    qint64      freqFromX(int x);
-    void        zoomStepX(float factor, int x);
     static qint64      roundFreq(qint64 freq, int resolution);
     quint64     msecFromY(int y);
     void        clampDemodParameters();

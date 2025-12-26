@@ -1,0 +1,523 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>CRecordingOptions</class>
+ <widget class="QDialog" name="CRecordingOptions">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>450</width>
+    <height>400</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Recording Options</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <widget class="QTabWidget" name="tabWidget">
+     <property name="currentIndex">
+      <number>0</number>
+     </property>
+     <!-- General Tab -->
+     <widget class="QWidget" name="tabGeneral">
+      <attribute name="title">
+       <string>General</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="verticalLayoutGeneral">
+       <item>
+        <widget class="QGroupBox" name="groupFolder">
+         <property name="title">
+          <string>Recording Folder</string>
+         </property>
+         <layout class="QHBoxLayout" name="horizontalLayoutFolder">
+          <item>
+           <widget class="QLineEdit" name="recFolderEdit">
+            <property name="toolTip">
+             <string>Location for all recordings</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="recFolderButton">
+            <property name="text">
+             <string>Browse...</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="groupFilename">
+         <property name="title">
+          <string>Filename Template</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayoutFilename">
+          <item>
+           <widget class="QLineEdit" name="filenameEdit">
+            <property name="toolTip">
+             <string>Template for recording filenames. Variables: {datetime}, {freq_mhz}, {mode}, {type}, {tuner}</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="horizontalLayoutPreview">
+            <item>
+             <widget class="QLabel" name="previewLabel">
+              <property name="text">
+               <string>Preview:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="filenamePreview">
+              <property name="text">
+               <string>filename_preview.wav</string>
+              </property>
+              <property name="styleSheet">
+               <string>color: gray;</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <spacer name="verticalSpacerGeneral">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <!-- IQ Recording Tab -->
+     <widget class="QWidget" name="tabIq">
+      <attribute name="title">
+       <string>IQ Recording</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="verticalLayoutIq">
+       <item>
+        <widget class="QGroupBox" name="groupIqFormat">
+         <property name="title">
+          <string>IQ Format</string>
+         </property>
+         <layout class="QFormLayout" name="formLayoutIq">
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelIqFormat">
+            <property name="text">
+             <string>File Format:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QComboBox" name="iqFormatCombo">
+            <item>
+             <property name="text">
+              <string>SigMF (.sigmf-data + .sigmf-meta)</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Raw CF32 (.cf32)</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>Raw CS16 (.cs16)</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>WAV I/Q (.wav)</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelTapPoint">
+            <property name="text">
+             <string>Tap Point:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QComboBox" name="tapPointCombo">
+            <item>
+             <property name="text">
+              <string>After DDC (~1 MHz)</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>After Filter (~96 kHz)</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <spacer name="verticalSpacerIq">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <!-- Audio Recording Tab -->
+     <widget class="QWidget" name="tabAudio">
+      <attribute name="title">
+       <string>Audio Recording</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="verticalLayoutAudio">
+       <item>
+        <widget class="QGroupBox" name="groupAudioFormat">
+         <property name="title">
+          <string>Audio Format</string>
+         </property>
+         <layout class="QFormLayout" name="formLayoutAudio">
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelAudioFormat">
+            <property name="text">
+             <string>File Format:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QComboBox" name="audioFormatCombo">
+            <item>
+             <property name="text">
+              <string>WAV</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>FLAC</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>OGG Vorbis</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelWavFormat">
+            <property name="text">
+             <string>WAV Sample Format:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QComboBox" name="wavFormatCombo">
+            <item>
+             <property name="text">
+              <string>16-bit PCM</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>32-bit PCM</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>32-bit Float</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QGroupBox" name="groupSquelch">
+         <property name="title">
+          <string>Squelch Recording Settings</string>
+         </property>
+         <layout class="QFormLayout" name="formLayoutSquelch">
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelPreBuffer">
+            <property name="text">
+             <string>Pre-buffer (ms):</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QSpinBox" name="preBufferSpin">
+            <property name="minimum">
+             <number>0</number>
+            </property>
+            <property name="maximum">
+             <number>5000</number>
+            </property>
+            <property name="value">
+             <number>500</number>
+            </property>
+            <property name="toolTip">
+             <string>Audio captured before squelch opens</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelPostBuffer">
+            <property name="text">
+             <string>Post-buffer (ms):</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QSpinBox" name="postBufferSpin">
+            <property name="minimum">
+             <number>0</number>
+            </property>
+            <property name="maximum">
+             <number>10000</number>
+            </property>
+            <property name="value">
+             <number>1000</number>
+            </property>
+            <property name="toolTip">
+             <string>Continue recording after squelch closes</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="labelMinDuration">
+            <property name="text">
+             <string>Min Duration (ms):</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QSpinBox" name="minDurationSpin">
+            <property name="minimum">
+             <number>0</number>
+            </property>
+            <property name="maximum">
+             <number>5000</number>
+            </property>
+            <property name="value">
+             <number>200</number>
+            </property>
+            <property name="toolTip">
+             <string>Ignore transmissions shorter than this</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="0">
+           <widget class="QLabel" name="labelChunkDuration">
+            <property name="text">
+             <string>Chunk Duration (min):</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="1">
+           <widget class="QSpinBox" name="chunkDurationSpin">
+            <property name="minimum">
+             <number>1</number>
+            </property>
+            <property name="maximum">
+             <number>60</number>
+            </property>
+            <property name="value">
+             <number>5</number>
+            </property>
+            <property name="toolTip">
+             <string>For chunk mode: file duration in minutes</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <spacer name="verticalSpacerAudio">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <!-- SigMF Metadata Tab -->
+     <widget class="QWidget" name="tabSigMF">
+      <attribute name="title">
+       <string>SigMF Metadata</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="verticalLayoutSigMF">
+       <item>
+        <widget class="QGroupBox" name="groupSigMF">
+         <property name="title">
+          <string>SigMF Metadata Defaults</string>
+         </property>
+         <layout class="QFormLayout" name="formLayoutSigMF">
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelAuthor">
+            <property name="text">
+             <string>Author:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QLineEdit" name="authorEdit">
+            <property name="toolTip">
+             <string>Author name for SigMF metadata</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelDescription">
+            <property name="text">
+             <string>Description:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QLineEdit" name="descriptionEdit">
+            <property name="toolTip">
+             <string>Default description for SigMF files</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="labelLicense">
+            <property name="text">
+             <string>License:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QComboBox" name="licenseCombo">
+            <property name="editable">
+             <bool>true</bool>
+            </property>
+            <item>
+             <property name="text">
+              <string>CC0</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>CC-BY-4.0</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>CC-BY-SA-4.0</string>
+             </property>
+            </item>
+            <item>
+             <property name="text">
+              <string>CC-BY-NC-4.0</string>
+             </property>
+            </item>
+           </widget>
+          </item>
+          <item row="3" column="0">
+           <widget class="QLabel" name="labelHardware">
+            <property name="text">
+             <string>Hardware:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="1">
+           <widget class="QLineEdit" name="hardwareEdit">
+            <property name="toolTip">
+             <string>Hardware description (auto-filled from SDR device)</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <spacer name="verticalSpacerSigMF">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>20</width>
+           <height>40</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttonBox">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections>
+  <connection>
+   <sender>buttonBox</sender>
+   <signal>accepted()</signal>
+   <receiver>CRecordingOptions</receiver>
+   <slot>accept()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>248</x>
+     <y>254</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>157</x>
+     <y>274</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>buttonBox</sender>
+   <signal>rejected()</signal>
+   <receiver>CRecordingOptions</receiver>
+   <slot>reject()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>316</x>
+     <y>260</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>286</x>
+     <y>274</y>
+    </hint>
+   </hints>
+  </connection>
+ </connections>
+</ui>
