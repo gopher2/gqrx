@@ -40,6 +40,10 @@ add_source_files(SRCS_LIST
 	freqctrl.h
 	ioconfig.cpp
 	ioconfig.h
+	iq_file_delegate.cpp
+	iq_file_delegate.h
+	iq_file_model.cpp
+	iq_file_model.h
 	iq_tool.cpp
 	iq_tool.h
 	meter.cpp

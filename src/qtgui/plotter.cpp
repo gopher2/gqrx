@@ -615,6 +615,12 @@ quint64 CPlotter::getWfTimeRes() const
         return 1000 / fft_rate;
 }
 
+/** Get waterfall height in pixels. */
+int CPlotter::getWaterfallHeight() const
+{
+    return m_WaterfallImage.isNull() ? 0 : m_WaterfallImage.height();
+}
+
 void CPlotter::setFftRate(int rate_hz)
 {
     fft_rate = rate_hz;
@@ -1442,7 +1448,8 @@ void CPlotter::draw(bool newData)
         }
 
         // is it time to update waterfall? msec_per_wfline is 0 in auto mode.
-        if (tnow_ms - wf_epoch > wf_count * msec_per_wfline)
+        // In fast playback mode, always draw - bypass time gating.
+        if (m_FastPlaybackMode || tnow_ms - wf_epoch > wf_count * msec_per_wfline)
         {
             ++wf_count;
 
@@ -1460,7 +1467,8 @@ void CPlotter::draw(bool newData)
             // draw black areas where data will not be draw
             memset(m_WaterfallImage.scanLine(m_WaterfallOffset), 0, m_WaterfallImage.bytesPerLine());
 
-            const bool useWfBuf = msec_per_wfline > 0;
+            // In fast playback mode, use dataSource directly instead of accumulated buffer
+            const bool useWfBuf = !m_FastPlaybackMode && msec_per_wfline > 0;
             float _lineFactor;
             if (useWfBuf && m_WaterfallMode != WATERFALL_MODE_MAX)
                 _lineFactor = 1.0f / (float)wf_avg_count;

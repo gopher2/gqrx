@@ -22,6 +22,9 @@
  * the Free Software Foundation, Inc., 51 Franklin Street,
  * Boston, MA 02110-1301, USA.
  */
+#include <algorithm>
+#include <cmath>
+#include <iostream>
 #include <string>
 #include <vector>
 #include <cmath>
@@ -229,6 +232,10 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     dec_timer = new QTimer(this);
     connect(dec_timer, SIGNAL(timeout()), this, SLOT(decoderTimeout()));
 
+    /* timer for fast playback EOF detection */
+    m_fastPlaybackCheckTimer = new QTimer(this);
+    connect(m_fastPlaybackCheckTimer, SIGNAL(timeout()), this, SLOT(fastPlaybackCheckTimeout()));
+
     // create I/Q tool widget
     iq_tool = new CIqTool(this);
 
@@ -255,6 +262,7 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     uiDockFft->toggleViewAction()->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_F));
     uiDockAudio->toggleViewAction()->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_A));
     uiDockBookmarks->toggleViewAction()->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_B));
+    iq_tool->toggleViewAction()->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
     ui->mainToolBar->toggleViewAction()->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_T));
 
     /* frequency setting shortcut */
@@ -291,12 +299,17 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     tabifyDockWidget(uiDockAudio, uiDockRDS);
     uiDockAudio->raise();
 
+    // IQ tool starts as floating window
+    addDockWidget(Qt::RightDockWidgetArea, iq_tool);
+    iq_tool->setFloating(true);
+
     addDockWidget(Qt::BottomDockWidgetArea, uiDockBookmarks);
     addDockWidget(Qt::LeftDockWidgetArea, uiDockTunerList);
 
     /* hide docks that we don't want to show initially */
     uiDockBookmarks->hide();
     uiDockRDS->hide();
+    iq_tool->hide();
 
     /* Add dock widget actions to View menu. By doing it this way all signal/slot
        connections will be established automagially.
@@ -307,6 +320,7 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     ui->menu_View->addAction(uiDockFft->toggleViewAction());
     ui->menu_View->addAction(uiDockBookmarks->toggleViewAction());
     ui->menu_View->addAction(uiDockTunerList->toggleViewAction());
+    ui->menu_View->addAction(iq_tool->toggleViewAction());
     ui->menu_View->addSeparator();
     ui->menu_View->addAction(ui->mainToolBar->toggleViewAction());
     ui->menu_View->addSeparator();
@@ -440,7 +454,7 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     connect(iq_tool, SIGNAL(startRecording(QString, QString)), remote, SLOT(startIqRecorder(QString, QString)));
     connect(iq_tool, SIGNAL(stopRecording()), this, SLOT(stopIqRecording()));
     connect(iq_tool, SIGNAL(stopRecording()), remote, SLOT(stopIqRecorder()));
-    connect(iq_tool, SIGNAL(startPlayback(QString,float,qint64)), this, SLOT(startIqPlayback(QString,float,qint64)));
+    connect(iq_tool, SIGNAL(startPlayback(QString,float,qint64,bool)), this, SLOT(startIqPlayback(QString,float,qint64,bool)));
     connect(iq_tool, SIGNAL(stopPlayback()), this, SLOT(stopIqPlayback()));
     connect(iq_tool, SIGNAL(seek(qint64)), this,SLOT(seekIqFile(qint64)));
 
@@ -2404,6 +2418,120 @@ void MainWindow::rdsTimeout()
 }
 
 /**
+ * @brief Check for completed spectrogram rows and push to waterfall.
+ */
+void MainWindow::fastPlaybackCheckTimeout()
+{
+    static unsigned int lastTotalFfts = 0;
+    static int staleCount = 0;
+    const int STALE_THRESHOLD = 50;  // 50 * 10ms = 500ms of no progress = file ended
+
+    if (!m_fastPlaybackActive)
+    {
+        m_fastPlaybackCheckTimer->stop();
+        lastTotalFfts = 0;
+        staleCount = 0;
+        return;
+    }
+
+    // Reset static counters at start of new playback (when no rows pushed yet)
+    if (m_fastPlaybackLastRowPushed == 0)
+    {
+        lastTotalFfts = 0;
+        staleCount = 0;
+    }
+
+    const unsigned int fftsize = rx->iq_fft_size();
+    if (fftsize == 0)
+        return;
+
+    // Get progress
+    unsigned int completedRows = rx->get_iq_fft_completed_rows();
+    unsigned int totalFfts = rx->get_iq_fft_total_ffts();
+
+    // Push any new completed rows to the waterfall
+    while (m_fastPlaybackLastRowPushed < completedRows)
+    {
+        if (rx->get_iq_fft_spectrogram_row(m_fastPlaybackLastRowPushed, m_spectrogramRowBuffer.data()) == 0)
+        {
+            // Push this row to the waterfall
+            ui->plotter->setNewFftData(m_spectrogramRowBuffer.data(), fftsize);
+        }
+        m_fastPlaybackLastRowPushed++;
+    }
+
+    // Update FFT display with global max-hold
+    if (rx->get_iq_fft_global_maxhold(d_iqFftData.data()) == 0)
+    {
+        // The FFT trace is updated via iqFftTimeout, but we can force an update here
+        // by ensuring d_iqFftData has the max-hold values
+    }
+
+    // Check if spectrogram is complete or stale (based on FFT progress, not row progress)
+    bool shouldStop = false;
+    if (rx->is_iq_fft_spectrogram_complete())
+    {
+        std::cout << "DEBUG: Spectrogram complete (" << totalFfts << " FFTs)" << std::endl;
+        shouldStop = true;
+    }
+    else if (totalFfts == lastTotalFfts)
+    {
+        // No new FFTs computed - file source might have ended
+        staleCount++;
+        if (staleCount >= STALE_THRESHOLD)
+        {
+            // File ended - finalize any remaining buffered samples
+            std::cout << "DEBUG: Spectrogram stale (" << totalFfts << " FFTs, "
+                      << completedRows << " rows) - finalizing" << std::endl;
+            rx->finalize_iq_fft_spectrogram();
+            shouldStop = true;
+        }
+    }
+    else
+    {
+        lastTotalFfts = totalFfts;
+        staleCount = 0;
+    }
+
+    // If stopping, push ALL remaining rows first
+    if (shouldStop)
+    {
+        // Push any remaining rows that haven't been sent to waterfall
+        completedRows = rx->get_iq_fft_completed_rows();  // Get final count
+        while (m_fastPlaybackLastRowPushed < completedRows)
+        {
+            if (rx->get_iq_fft_spectrogram_row(m_fastPlaybackLastRowPushed, m_spectrogramRowBuffer.data()) == 0)
+            {
+                ui->plotter->setNewFftData(m_spectrogramRowBuffer.data(), fftsize);
+            }
+            m_fastPlaybackLastRowPushed++;
+        }
+        std::cout << "DEBUG: Pushed all " << m_fastPlaybackLastRowPushed << " rows to waterfall" << std::endl;
+
+        lastTotalFfts = 0;
+        staleCount = 0;
+        iq_tool->stopPlayback();
+        return;
+    }
+
+    // Update status bar with progress
+    qint64 elapsedMs = m_fastPlaybackStartTime.elapsed();
+    unsigned int totalRows = rx->get_iq_fft_spectrogram_rows();
+    int progressPct = (totalRows > 0) ? (completedRows * 100 / totalRows) : 0;
+    double speedup = (elapsedMs > 0) ? (double)m_fastPlaybackRealDurationMs / elapsedMs : 0;
+
+    ui->statusBar->showMessage(tr("Fast playback: %1% (%2/%3 rows) - %4x speed")
+        .arg(progressPct)
+        .arg(completedRows)
+        .arg(totalRows)
+        .arg(speedup, 0, 'f', 1));
+
+    // Update IQ tool slider based on spectrogram progress
+    int progressSeconds = (m_fastPlaybackRealDurationMs * progressPct / 100) / 1000;
+    iq_tool->setPlaybackProgress(progressSeconds);
+}
+
+/**
  * @brief Start audio recorder.
  * @param filename The file name into which audio should be recorded.
  */
@@ -2596,8 +2724,18 @@ void MainWindow::stopIqRecording()
     }
 }
 
-void MainWindow::startIqPlayback(const QString& filename, float samprate, qint64 center_freq)
+void MainWindow::startIqPlayback(const QString& filename, float samprate, qint64 center_freq, bool fast)
 {
+    // Check for empty or invalid file
+    QFileInfo fileCheck(filename);
+    if (!fileCheck.exists() || fileCheck.size() == 0)
+    {
+        QMessageBox::warning(this, tr("Playback Error"),
+                             tr("Cannot play file: file is empty or does not exist."));
+        iq_tool->cancelPlayback();
+        return;
+    }
+
     if (ui->actionDSP->isChecked())
     {
         // suspend DSP while we reload settings
@@ -2609,15 +2747,20 @@ void MainWindow::startIqPlayback(const QString& filename, float samprate, qint64
     auto sri = (int)samprate;
     auto cf  = center_freq;
     QString escapedFilename = receiver::escape_filename(filename.toStdString()).c_str();
-    auto devstr = QString("file=%1,rate=%2,freq=%3,throttle=true,repeat=false")
-            .arg(escapedFilename).arg(sri).arg(cf);
+    QString throttle = fast ? "false" : "true";
+    auto devstr = QString("file=%1,rate=%2,freq=%3,throttle=%4,repeat=false")
+            .arg(escapedFilename).arg(sri).arg(cf).arg(throttle);
 
     qDebug() << __func__ << ":" << devstr;
+    std::cout << "IQ Playback device string: " << devstr.toStdString() << std::endl;
 
     if (tuner_manager) {
         tuner_manager->set_input_device(devstr.toStdString());
     }
     updateHWFrequencyRange(false);
+
+    // Reset decimation to 1 for file playback (FFT needs true sample rate)
+    rx->set_input_decim(1);
 
     // sample rate
     double actual_rate = 0.0;
@@ -2643,21 +2786,144 @@ void MainWindow::startIqPlayback(const QString& filename, float samprate, qint64
     remote->setBandwidth(actual_rate);
     updateSourceStatusLabels();
 
-    // FIXME: would be nice with good/bad status
-    ui->statusBar->showMessage(tr("Playing %1").arg(filename));
+    // Clear waterfall and FFT for fresh playback start
+    ui->plotter->clearWaterfall();
+    std::fill(d_iqFftData.begin(), d_iqFftData.end(), 0.0f);
 
+    if (fast)
+    {
+        // Fast mode - disconnect demod chain for unthrottled playback
+        std::cout << "DEBUG: Fast mode enabled - switching to RX_DEMOD_OFF" << std::endl;
+
+        // Save current demod mode and switch to OFF (disconnects audio chain)
+        m_fastPlaybackPrevDemod = rx->get_demod();
+        std::cout << "DEBUG: Saved previous demod mode: " << m_fastPlaybackPrevDemod << std::endl;
+
+        rx->set_demod(receiver::RX_DEMOD_OFF);
+        std::cout << "DEBUG: Set demod to OFF (RX_CHAIN_NONE)" << std::endl;
+
+        // Get file size and calculate real-time duration
+        QFileInfo fileInfo(filename);
+        m_fastPlaybackFileSize = fileInfo.size();
+        m_fastPlaybackSampleRate = samprate;
+        // Duration in seconds: file_size / (sample_rate * 8 bytes per sample)
+        double realDurationSec = (double)m_fastPlaybackFileSize / (samprate * 8.0);
+        m_fastPlaybackRealDurationMs = (qint64)(realDurationSec * 1000.0);
+
+        std::cout << "DEBUG: File size: " << m_fastPlaybackFileSize << " bytes" << std::endl;
+        std::cout << "DEBUG: Sample rate: " << m_fastPlaybackSampleRate << " Hz" << std::endl;
+        std::cout << "DEBUG: Real-time duration: " << m_fastPlaybackRealDurationMs << " ms ("
+                  << (m_fastPlaybackRealDurationMs / 1000 / 60) << "m "
+                  << ((m_fastPlaybackRealDurationMs / 1000) % 60) << "s)" << std::endl;
+
+        // Calculate number of spectrogram rows based on waterfall time resolution
+        int wfHeight = ui->plotter->getWaterfallHeight();
+        if (wfHeight <= 0)
+            wfHeight = 800;  // Default if not yet initialized
+
+        // Get waterfall time resolution (ms per row)
+        quint64 wfTimeRes = ui->plotter->getWfTimeRes();
+        unsigned int spectrogramRows;
+
+        if (wfTimeRes > 0) {
+            // Calculate rows based on file duration and time resolution
+            // This respects the user's waterfall span setting
+            spectrogramRows = (unsigned int)(m_fastPlaybackRealDurationMs / wfTimeRes);
+        } else {
+            // Fallback: fill the waterfall
+            spectrogramRows = (unsigned int)wfHeight;
+        }
+
+        spectrogramRows = std::max(100u, spectrogramRows);  // Minimum 100 rows
+        spectrogramRows = std::min(spectrogramRows, (unsigned int)wfHeight); // Don't exceed waterfall height
+        spectrogramRows = std::min(spectrogramRows, 50000u); // Cap memory usage
+
+        std::cout << "DEBUG: Waterfall height: " << wfHeight << " pixels" << std::endl;
+        std::cout << "DEBUG: Waterfall time resolution: " << wfTimeRes << " ms/row" << std::endl;
+        std::cout << "DEBUG: Calculated spectrogram rows: " << spectrogramRows << std::endl;
+
+        // Enable spectrogram mode on FFT block
+        rx->set_iq_fft_spectrogram_mode(true, spectrogramRows, realDurationSec);
+        std::cout << "DEBUG: Enabled spectrogram mode with " << spectrogramRows << " rows" << std::endl;
+
+        // Allocate buffer for reading spectrogram rows
+        m_spectrogramRowBuffer.resize(rx->iq_fft_size());
+        m_fastPlaybackLastRowPushed = 0;
+
+        m_fastPlaybackStartTime.start();
+        m_fastPlaybackCheckTimer->start(10);  // Check every 10ms for new rows
+
+        // Enable fast playback mode on plotter to bypass time gating
+        ui->plotter->setFastPlaybackMode(true);
+
+        m_fastPlaybackActive = true;
+        ui->statusBar->showMessage(tr("Fast playback: %1").arg(filename));
+    }
+    else
+    {
+        m_fastPlaybackActive = false;
+        m_fastPlaybackCheckTimer->stop();
+        ui->plotter->setFastPlaybackMode(false);
+        rx->set_iq_fft_spectrogram_mode(false, 0, 0);
+        ui->statusBar->showMessage(tr("Playing %1").arg(filename));
+    }
+
+    std::cout << "DEBUG: Starting DSP..." << std::endl;
     on_actionDSP_triggered(true);
+    std::cout << "DEBUG: DSP started" << std::endl;
 }
 
 void MainWindow::stopIqPlayback()
 {
+    std::cout << "DEBUG: stopIqPlayback called" << std::endl;
+
+    // Stop fast playback check timer
+    m_fastPlaybackCheckTimer->stop();
+
     if (ui->actionDSP->isChecked())
     {
         // suspend DSP while we reload settings
+        std::cout << "DEBUG: Stopping DSP..." << std::endl;
         on_actionDSP_triggered(false);
     }
 
-    ui->statusBar->showMessage(tr("I/Q playback stopped"), 5000);
+    // Restore previous demod mode and show stats if fast playback was active
+    if (m_fastPlaybackActive)
+    {
+        qint64 elapsedMs = m_fastPlaybackStartTime.elapsed();
+        qint64 realDurationSec = m_fastPlaybackRealDurationMs / 1000;
+        qint64 elapsedSec = elapsedMs / 1000;
+        double speedup = (elapsedMs > 0) ? (double)m_fastPlaybackRealDurationMs / elapsedMs : 0;
+        unsigned int completedRows = rx->get_iq_fft_completed_rows();
+        unsigned int totalRows = rx->get_iq_fft_spectrogram_rows();
+
+        std::cout << "DEBUG: Fast playback complete - elapsed: " << elapsedMs << "ms, real duration: "
+                  << m_fastPlaybackRealDurationMs << "ms, speedup: " << speedup << "x" << std::endl;
+        std::cout << "DEBUG: Spectrogram rows: " << completedRows << "/" << totalRows << std::endl;
+
+        // Disable spectrogram mode and fast playback mode on plotter
+        rx->set_iq_fft_spectrogram_mode(false, 0, 0);
+        ui->plotter->setFastPlaybackMode(false);
+        std::cout << "DEBUG: Disabled spectrogram mode" << std::endl;
+
+        std::cout << "DEBUG: Restoring previous demod mode: " << m_fastPlaybackPrevDemod << std::endl;
+        rx->set_demod(static_cast<receiver::rx_demod>(m_fastPlaybackPrevDemod));
+        m_fastPlaybackActive = false;
+
+        // Show completion message with stats
+        QString msg = tr("Fast playback complete: %1m%2s of data in %3m%4s (%5x) - %6 rows")
+            .arg(realDurationSec / 60)
+            .arg(realDurationSec % 60, 2, 10, QChar('0'))
+            .arg(elapsedSec / 60)
+            .arg(elapsedSec % 60, 2, 10, QChar('0'))
+            .arg(speedup, 0, 'f', 1)
+            .arg(completedRows);
+        ui->statusBar->showMessage(msg, 10000);
+    }
+    else
+    {
+        ui->statusBar->showMessage(tr("I/Q playback stopped"), 5000);
+    }
 
     // restore original input device
     auto indev = m_settings->value("input/device", "").toString();
@@ -3308,10 +3574,13 @@ void MainWindow::on_actionSaveSettings_triggered()
         m_last_dir = fi.absolutePath();
 }
 
-/** Show I/Q player. */
+/** Toggle I/Q recorder dock visibility. */
 void MainWindow::on_actionIqTool_triggered()
 {
-    iq_tool->show();
+    if (iq_tool->isVisible())
+        iq_tool->hide();
+    else
+        iq_tool->show();
 }
 
 

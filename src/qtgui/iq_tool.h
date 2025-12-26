@@ -23,14 +23,17 @@
 #ifndef IQ_TOOL_H
 #define IQ_TOOL_H
 
-#include <QCloseEvent>
-#include <QDialog>
 #include <QDir>
+#include <QDockWidget>
+#include <QMenu>
 #include <QPalette>
 #include <QSettings>
-#include <QShowEvent>
+#include <QSortFilterProxyModel>
 #include <QString>
 #include <QTimer>
+
+#include "iq_file_model.h"
+#include "iq_file_delegate.h"
 
 namespace Ui {
     class CIqTool;
@@ -45,7 +48,7 @@ struct iqt_cplx
 
 
 /*! \brief User interface for I/Q recording and playback. */
-class CIqTool : public QDialog
+class CIqTool : public QDockWidget
 {
     Q_OBJECT
 
@@ -55,16 +58,14 @@ public:
 
     void setSampleRate(qint64 sr);
 
-    void closeEvent(QCloseEvent *event);
-    void showEvent(QShowEvent * event);
-
     void saveSettings(QSettings *settings);
     void readSettings(QSettings *settings);
+    void setPlaybackProgress(int seconds);  /*!< Update slider position without triggering seek */
 
 signals:
     void startRecording(const QString recdir, const QString format);
     void stopRecording();
-    void startPlayback(const QString filename, float samprate, qint64 center_freq);
+    void startPlayback(const QString filename, float samprate, qint64 center_freq, bool fast);
     void stopPlayback();
     void seek(qint64 seek_pos);
 
@@ -80,16 +81,28 @@ private slots:
     void on_recButton_clicked(bool checked);
     void on_playButton_clicked(bool checked);
     void on_slider_valueChanged(int value);
-    void on_listWidget_currentTextChanged(const QString &currentText);
+    void onSelectionChanged();
+    void onHeaderContextMenu(const QPoint &pos);
+    void onFileContextMenu(const QPoint &pos);
+    void onOpenInFinder();
+    void onEditFile();
+    void onDeleteFile();
     void timeoutFunction(void);
 
 private:
     void refreshDir(void);
     void refreshTimeWidgets(void);
+    void updateDiskSpace(void);
     void parseFileName(const QString &filename);
+    void setupTableView(void);
+    void updateFilenameColumnIndex(void);
 
 private:
     Ui::CIqTool *ui;
+
+    IqFileModel         *m_fileModel;
+    QSortFilterProxyModel *m_proxyModel;
+    IqFileDelegate      *m_delegate;
 
     QDir        *recdir;
     QTimer      *timer;
@@ -99,6 +112,7 @@ private:
 
     bool    is_recording;
     bool    is_playing;
+    bool    m_columnsAutoSized{false}; /*!< Track if columns have been auto-sized */
     int     bytes_per_sample;  /*!< Bytes per sample (fc = 4) */
     int     sample_rate;       /*!< Current sample rate. */
     qint64  center_freq;       /*!< Center frequency. */
