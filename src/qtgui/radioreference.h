@@ -26,27 +26,35 @@
 #include <QObject>
 #include <QString>
 #include <QList>
+#include <QMap>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 
 /* Frequency result from RadioReference */
 struct RRFrequency
 {
-    double   frequency;      // Frequency in Hz
-    QString  description;    // Description/name
-    QString  mode;           // Modulation mode (FM, NFM, AM, etc.)
-    QString  tone;           // PL/CTCSS tone
-    QString  alpha_tag;      // Short tag/identifier
-    QString  tag;            // Category tag (Police, Fire, EMS, etc.)
-    QString  agency;         // Agency name
-    int      county_id;
-    int      state_id;
+    double   frequency = 0;      // Frequency in Hz (output/TX)
+    double   input_freq = 0;     // Input frequency for repeaters
+    QString  callsign;           // Callsign
+    QString  alpha_tag;          // Short tag/identifier
+    QString  description;        // Description/name
+    QString  mode;               // Modulation mode (FM, NFM, AM, etc.)
+    QString  tone;               // PL/CTCSS tone
+    QString  color_code;         // DMR color code
+    QString  talkgroup;          // DMR talkgroup
+    QString  slot;               // DMR slot
+    QString  service_class;      // Service class (RM=Repeater, BM=Base/Mobile, etc.)
+    QString  tag;                // Category tag (Police, Fire, EMS, etc.)
+    QString  agency;             // Agency name
+    int      county_id = 0;
+    int      state_id = 0;
+    bool     encrypted = false;  // Encrypted flag
 };
 
 /* State info */
 struct RRState
 {
-    int     id;
+    int     id = 0;
     QString name;
     QString abbrev;
 };
@@ -54,15 +62,14 @@ struct RRState
 /* County info */
 struct RRCounty
 {
-    int     id;
-    int     state_id;
+    int     id = 0;
     QString name;
 };
 
 /* Metro area info */
 struct RRMetro
 {
-    int     id;
+    int     id = 0;
     QString name;
 };
 
@@ -74,8 +81,8 @@ public:
     explicit RadioReference(QObject *parent = nullptr);
     ~RadioReference();
 
-    /* Set credentials */
-    void setCredentials(const QString &username, const QString &password, const QString &appKey);
+    /* Set credentials (app key is built-in) */
+    void setCredentials(const QString &username, const QString &password);
     bool hasCredentials() const;
 
     /* Get location lists */
@@ -104,6 +111,7 @@ signals:
     void frequenciesReceived(const QList<RRFrequency> &frequencies);
     void lookupResult(const QList<RRFrequency> &matches);
     void userDataReceived(bool isPremium, const QString &expiresDate);
+    void fetchProgress(int current, int total, int freqsSoFar, const QString &categoryName);
     void error(const QString &message);
 
 private slots:
@@ -119,12 +127,22 @@ private:
     void parseMetroList(const QString &xml);
     void parseFrequencies(const QString &xml, bool isLookup = false);
     void parseUserData(const QString &xml);
+    void parseCountyInfoForFreqs(const QString &xml);
+    void parseSubcatFreqs(const QString &xml);
+    void fetchNextSubcat();
 
     QNetworkAccessManager *m_networkManager;
     QString m_username;
     QString m_password;
     QString m_appKey;
-    QString m_pendingRequestType;
+
+    // For multi-request frequency fetching
+    QList<int> m_pendingSubcatIds;
+    QMap<int, QString> m_subcatNames;  // scid -> subcategory name
+    QString m_currentSubcatName;
+    QList<RRFrequency> m_aggregatedFrequencies;
+    int m_currentCountyId;
+    int m_totalSubcats;
 
     static const QString API_ENDPOINT;
 };
