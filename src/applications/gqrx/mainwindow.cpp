@@ -1487,6 +1487,10 @@ void MainWindow::setNewFrequency(qint64 rx_freq)
         return;
     }
 
+    // Block frequency changes during IQ playback
+    if (!ui->freqCtrl->isEnabled())
+        return;
+
     // Get current RF frequency to calculate the shift
     qint64 old_rf_freq = tuner_manager->get_rf_freq();
     qint64 new_rf_freq = rx_freq - d_lnb_lo;
