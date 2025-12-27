@@ -256,6 +256,7 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     BandPlan::Get().load();
     uiDockBookmarks = new DockBookmarks(this);
     uiDockRRImport = new DockRRImport(this);
+    uiDockBandplan = new DockBandplan(this);
 
     remote->setTunerManager(tuner_manager);
 
@@ -308,11 +309,14 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     addDockWidget(Qt::BottomDockWidgetArea, uiDockBookmarks);
     addDockWidget(Qt::LeftDockWidgetArea, uiDockTunerList);
     addDockWidget(Qt::BottomDockWidgetArea, uiDockRRImport);
+    addDockWidget(Qt::BottomDockWidgetArea, uiDockBandplan);
     tabifyDockWidget(uiDockBookmarks, uiDockRRImport);
+    tabifyDockWidget(uiDockBookmarks, uiDockBandplan);
     uiDockBookmarks->raise();
 
     /* hide docks that we don't want to show initially */
     uiDockBookmarks->hide();
+    uiDockBandplan->hide();
     uiDockRDS->hide();
     iq_tool->hide();
     uiDockRRImport->hide();
@@ -328,6 +332,7 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     ui->menu_View->addAction(uiDockTunerList->toggleViewAction());
     ui->menu_View->addAction(iq_tool->toggleViewAction());
     ui->menu_View->addAction(uiDockRRImport->toggleViewAction());
+    ui->menu_View->addAction(uiDockBandplan->toggleViewAction());
     ui->menu_View->addSeparator();
     ui->menu_View->addAction(ui->mainToolBar->toggleViewAction());
     ui->menu_View->addSeparator();
@@ -462,6 +467,11 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     connect(ui->plotter, SIGNAL(lookupFrequencyRequested(qint64)), uiDockRRImport, SLOT(setFrequencyFilter(qint64)));
     connect(ui->plotter, &CPlotter::lookupFrequencyRequested, uiDockRRImport, &QDockWidget::show);
     connect(uiDockRRImport, &DockRRImport::frequenciesImported, uiDockBookmarks, &DockBookmarks::updateBookmarks);
+
+    // Band Plan
+    connect(uiDockBandplan, SIGNAL(newFrequency(qint64)), this, SLOT(setNewFrequency(qint64)));
+    connect(&BandPlan::Get(), SIGNAL(BandPlanChanged()), ui->plotter, SLOT(updateOverlay()));
+    connect(ui->plotter, SIGNAL(bandClicked(int)), uiDockBandplan, SLOT(selectBand(int)));
 
     //DXC Spots
     connect(&DXCSpots::Get(), SIGNAL(dxcSpotsUpdated()), this, SLOT(updateClusterSpots()));

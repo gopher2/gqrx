@@ -185,6 +185,7 @@ signals:
     void markerSelectA(qint64 freq);
     void markerSelectB(qint64 freq);
     void lookupFrequencyRequested(qint64 freq);
+    void bandClicked(int bandIndex);
 
 public slots:
     // zoom functions
@@ -256,7 +257,8 @@ private:
         TAG,
         MARKER_A,
         MARKER_B,
-        PEAK_LABEL
+        PEAK_LABEL,
+        BANDPLAN
     };
 
     void        drawOverlay();
@@ -400,6 +402,7 @@ private:
     qint64      m_DraggedPeakFreq{};             // Frequency of label being dragged
 
     QList< QPair<QRectF, qint64> >     m_Taglist;
+    QList< QPair<QRectF, int> >        m_BandRectList;  // Band rectangles with indices for click detection
 
     // Waterfall averaging
     quint64     tlast_wf_ms;        // last time waterfall has been updated

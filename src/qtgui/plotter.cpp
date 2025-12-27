@@ -229,11 +229,27 @@ void CPlotter::mouseMoveEvent(QMouseEvent* event)
                     }
                 }
             }
+            // Check if hovering over a band plan entry
+            bool onBand = false;
+            if (m_BandPlanEnabled)
+            {
+                for (int i = 0; i < m_BandRectList.size() && !onBand; i++)
+                {
+                    if (m_BandRectList[i].first.contains(ppos))
+                        onBand = true;
+                }
+            }
+
             // if no mouse button monitor grab regions and change cursor icon
             if (onTag)
             {
                 setCursor(QCursor(Qt::PointingHandCursor));
                 m_CursorCaptured = TAG;
+            }
+            else if (onBand)
+            {
+                setCursor(QCursor(Qt::PointingHandCursor));
+                m_CursorCaptured = BANDPLAN;
             }
             else if (isPointCloseTo(px, m_YAxisWidth/2, m_YAxisWidth/2))
             {
@@ -871,6 +887,17 @@ void CPlotter::mousePressEvent(QMouseEvent * event)
                 {
                     m_DemodCenterFreq = tag.second;
                     emit newDemodFreq(m_DemodCenterFreq, m_DemodCenterFreq - m_CenterFreq);
+                    break;
+                }
+            }
+        }
+        else if (m_CursorCaptured == BANDPLAN)
+        {
+            for (auto & bandRect : m_BandRectList)
+            {
+                if (bandRect.first.contains(ppos))
+                {
+                    emit bandClicked(bandRect.second);
                     break;
                 }
             }
@@ -2448,23 +2475,93 @@ void CPlotter::drawOverlay()
         m_Taglist.clear();
     }
 
+    m_BandRectList.clear();
+
     if (m_BandPlanEnabled)
     {
-        QList<BandInfo> bands = BandPlan::Get().getBandsInRange(m_CenterFreq + m_FftCenter - m_Span / 2,
-                                                                m_CenterFreq + m_FftCenter + m_Span / 2);
+        QList<QPair<int, BandInfo>> bandsWithIndex = BandPlan::Get().getBandsInRangeWithIndex(
+            m_CenterFreq + m_FftCenter - m_Span / 2,
+            m_CenterFreq + m_FftCenter + m_Span / 2);
 
-        m_BandPlanHeight = metrics.height() + VER_MARGIN;
-        for (auto & band : bands)
+        qreal rowHeight = metrics.height() + VER_MARGIN;
+
+        // Structure to hold band drawing info with row assignment
+        struct BandDrawInfo {
+            int left;
+            int right;
+            int row;
+            BandInfo band;
+            int bandIndex;  // Index in the full band plan list
+        };
+        QList<BandDrawInfo> bandDrawList;
+
+        // Calculate x coordinates and assign rows using greedy algorithm
+        // Each row tracks the rightmost x coordinate used
+        QList<int> rowEndX;
+
+        for (const auto & bandPair : bandsWithIndex)
         {
+            int bandIndex = bandPair.first;
+            const BandInfo& band = bandPair.second;
+
+            if (!band.visible)
+                continue;
+
             int band_left = std::max(xFromFreq(band.minFrequency), 0);
             int band_right = std::min(xFromFreq(band.maxFrequency), (int)w);
-            int band_width = band_right - band_left;
-            QRectF rect(band_left, xAxisTop - m_BandPlanHeight, band_width, m_BandPlanHeight);
-            painter.fillRect(rect, band.color);
-            QString band_label = metrics.elidedText(band.name + " (" + band.modulation + ")", Qt::ElideRight, band_width - 10);
-            QRectF textRect(band_left, xAxisTop - m_BandPlanHeight, band_width, metrics.height());
-            painter.setPen(QPen(QColor::fromRgba(PLOTTER_TEXT_COLOR), m_DPR));
+
+            if (band_right <= band_left)
+                continue;
+
+            // Find the lowest row where this band fits (doesn't overlap)
+            int assignedRow = -1;
+            for (int r = 0; r < rowEndX.size(); r++)
+            {
+                if (band_left >= rowEndX[r])
+                {
+                    assignedRow = r;
+                    rowEndX[r] = band_right;
+                    break;
+                }
+            }
+
+            // If no existing row fits, create a new row
+            if (assignedRow < 0)
+            {
+                assignedRow = rowEndX.size();
+                rowEndX.append(band_right);
+            }
+
+            BandDrawInfo info;
+            info.left = band_left;
+            info.right = band_right;
+            info.row = assignedRow;
+            info.band = band;
+            info.bandIndex = bandIndex;
+            bandDrawList.append(info);
+        }
+
+        int numRows = rowEndX.size();
+        m_BandPlanHeight = numRows * rowHeight;
+
+        // Draw all bands at their assigned rows
+        for (const auto & info : bandDrawList)
+        {
+            int band_width = info.right - info.left;
+            qreal rowY = xAxisTop - (info.row + 1) * rowHeight;
+            QRectF rect(info.left, rowY, band_width, rowHeight);
+            painter.fillRect(rect, info.band.color);
+            QString band_label = metrics.elidedText(info.band.name + " (" + info.band.modulation + ")", Qt::ElideRight, band_width - 10);
+            QRectF textRect(info.left, rowY, band_width, metrics.height());
+
+            // Calculate luminance to determine text color (dark on light backgrounds, light on dark)
+            int luminance = (299 * info.band.color.red() + 587 * info.band.color.green() + 114 * info.band.color.blue()) / 1000;
+            QColor textColor = (luminance > 128) ? Qt::black : Qt::white;
+            painter.setPen(QPen(textColor, m_DPR));
             painter.drawText(textRect, Qt::AlignCenter, band_label);
+
+            // Store rectangle for click detection
+            m_BandRectList.append(qMakePair(rect, info.bandIndex));
         }
     }
 
