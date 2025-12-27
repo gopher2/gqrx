@@ -92,10 +92,13 @@ bool Bookmarks::load()
                 continue;
 
             QStringList strings = line.split(";");
-            if(strings.count() == 2)
+            if(strings.count() >= 2)
             {
                 TagInfo::sptr info = findOrAddTag(strings[0]);
                 info->color = QColor(strings[1].trimmed());
+                // Read active state if present; defaults to true for old files
+                if (strings.count() >= 3)
+                    info->active = (strings[2].trimmed() == "1");
             }
             else
             {
@@ -154,7 +157,7 @@ bool Bookmarks::save()
         QTextStream stream(&file);
 
         stream << QString("# Tag name").leftJustified(20) + "; " +
-                  QString(" color") << '\n';
+                  QString(" color") + "; " + QString("active") << '\n';
 
         QMap<QString, TagInfo::sptr> usedTags;
         for (int iBookmark = 0; iBookmark < m_BookmarkList.size(); iBookmark++)
@@ -169,7 +172,7 @@ bool Bookmarks::save()
         for (QMap<QString, TagInfo::sptr>::iterator i = usedTags.begin(); i != usedTags.end(); i++)
         {
             TagInfo::sptr info = *i;
-            stream << info->name.leftJustified(20) + "; " + info->color.name() << '\n';
+            stream << info->name.leftJustified(20) + "; " + info->color.name() + "; " + (info->active ? "1" : "0") << '\n';
         }
 
         stream << '\n';
@@ -291,6 +294,7 @@ bool Bookmarks::setTagChecked(QString tagName, bool bChecked)
     int idx = getTagIndex(tagName);
     if (idx == -1) return false;
     m_TagList[idx]->active = bChecked;
+    save();
     emit BookmarksChanged();
     emit TagListChanged();
     return true;

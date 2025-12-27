@@ -176,6 +176,7 @@ signals:
     void newSize();
     void markerSelectA(qint64 freq);
     void markerSelectB(qint64 freq);
+    void lookupFrequencyRequested(qint64 freq);
 
 public slots:
     // zoom functions

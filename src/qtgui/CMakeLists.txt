@@ -62,6 +62,10 @@ add_source_files(SRCS_LIST
 	tuner_list.h
 	tuner_panel.cpp
 	tuner_panel.h
+	radioreference.cpp
+	radioreference.h
+	rrimportdialog.cpp
+	rrimportdialog.h
 )
 
 #######################################################################################################################

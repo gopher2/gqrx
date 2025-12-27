@@ -28,6 +28,10 @@
 #include <QInputDialog>
 #include <QMenu>
 #include <QMessageBox>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QRegularExpression>
 
 #include "bookmarks.h"
 #include "bookmarkstaglist.h"
@@ -43,6 +47,9 @@ DockBookmarks::DockBookmarks(QWidget *parent) :
     ui->setupUi(this);
 
     bookmarksTableModel = new BookmarksTableModel();
+    m_networkManager = new QNetworkAccessManager(this);
+    connect(m_networkManager, &QNetworkAccessManager::finished,
+            this, &DockBookmarks::onAmsatDataReceived);
 
     // Frequency List
     ui->tableViewFrequencyList->setModel(bookmarksTableModel);
@@ -284,4 +291,250 @@ void DockBookmarks::changeBookmarkTags(int row, int /*column*/)
             Bookmarks::Get().save();
         }
     }
+}
+
+void DockBookmarks::on_btnUpdateAmsat_clicked()
+{
+    ui->btnUpdateAmsat->setEnabled(false);
+    ui->btnUpdateAmsat->setText("Fetching...");
+
+    QUrl url("https://raw.githubusercontent.com/palewire/amateur-satellite-database/main/data/amsat-active-frequencies.json");
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::UserAgentHeader, "gqrx");
+    m_networkManager->get(request);
+}
+
+void DockBookmarks::onAmsatDataReceived(QNetworkReply* reply)
+{
+    ui->btnUpdateAmsat->setEnabled(true);
+    ui->btnUpdateAmsat->setText("Update AMSAT Satellites");
+
+    if (reply->error() != QNetworkReply::NoError)
+    {
+        QMessageBox::warning(this, "AMSAT Update Failed",
+            QString("Failed to fetch satellite data:\n%1").arg(reply->errorString()));
+        reply->deleteLater();
+        return;
+    }
+
+    QByteArray data = reply->readAll();
+    reply->deleteLater();
+
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    if (parseError.error != QJsonParseError::NoError)
+    {
+        QMessageBox::warning(this, "AMSAT Update Failed",
+            QString("Failed to parse satellite data:\n%1").arg(parseError.errorString()));
+        return;
+    }
+
+    if (!doc.isArray())
+    {
+        QMessageBox::warning(this, "AMSAT Update Failed", "Unexpected data format");
+        return;
+    }
+
+    // Remove existing AMSAT bookmarks (clear & refresh)
+    const QString amsatTagName = "AMSAT Satellites";
+    for (int i = Bookmarks::Get().size() - 1; i >= 0; i--)
+    {
+        BookmarkInfo& bm = Bookmarks::Get().getBookmark(i);
+        for (const auto& tag : bm.tags)
+        {
+            if (tag->name == amsatTagName)
+            {
+                Bookmarks::Get().remove(i);
+                break;
+            }
+        }
+    }
+
+    // Create or get the AMSAT tag
+    TagInfo::sptr amsatTag = Bookmarks::Get().findOrAddTag(amsatTagName);
+    amsatTag->color = QColor("#4a90d9");  // Blue color for satellites
+
+    // Extract base name from satellite family (e.g., "TEVEL-2" -> "TEVEL", "FEES-2" -> "FEES")
+    auto getBaseName = [](const QString& name) -> QString {
+        // Match patterns like "NAME-N", "NAME N", "NAME_N" where N is a number
+        QRegularExpression re("^(.+?)[-_ ]?\\d+$");
+        QRegularExpressionMatch match = re.match(name);
+        if (match.hasMatch())
+            return match.captured(1);
+        return name;
+    };
+
+    // Structure to group satellites by frequency
+    struct FreqEntry {
+        QStringList rawNames;      // Original satellite names
+        QString modulation;
+        qint64 bandwidth;
+        QString type;              // DL, BCN, UL
+    };
+    QMap<qint64, FreqEntry> freqMap;
+
+    auto parseFrequency = [](const QString& freqStr) -> qint64 {
+        if (freqStr.isEmpty() || freqStr == "null")
+            return 0;
+        // Handle frequency ranges like "145.850-145.950"
+        QString freq = freqStr.split("-").first().trimmed();
+        // Convert MHz to Hz
+        bool ok;
+        double mhz = freq.toDouble(&ok);
+        if (ok && mhz > 0)
+            return static_cast<qint64>(mhz * 1000000.0);
+        return 0;
+    };
+
+    QJsonArray satellites = doc.array();
+
+    for (const QJsonValue& satValue : satellites)
+    {
+        QJsonObject sat = satValue.toObject();
+        QString name = sat["name"].toString();
+        QString downlink = sat["downlink"].toString();
+        QString beacon = sat["beacon"].toString();
+        QString uplink = sat["uplink"].toString();
+        QString mode = sat["mode"].toString();
+
+        // Process downlink frequencies
+        if (!downlink.isEmpty() && downlink != "null")
+        {
+            qint64 freq = parseFrequency(downlink);
+            if (freq > 0)
+            {
+                if (freqMap.contains(freq))
+                    freqMap[freq].rawNames.append(name);
+                else
+                    freqMap[freq] = {QStringList{name}, mapSatelliteModeToModulation(mode), 12500, "DL"};
+            }
+        }
+
+        // Process beacon frequencies
+        if (!beacon.isEmpty() && beacon != "null")
+        {
+            qint64 freq = parseFrequency(beacon);
+            if (freq > 0)
+            {
+                QString bcnName = name + " BCN";
+                if (freqMap.contains(freq))
+                    freqMap[freq].rawNames.append(bcnName);
+                else
+                    freqMap[freq] = {QStringList{bcnName}, "CW-U", 500, "BCN"};
+            }
+        }
+
+        // Process uplink frequencies
+        if (!uplink.isEmpty() && uplink != "null")
+        {
+            qint64 freq = parseFrequency(uplink);
+            if (freq > 0)
+            {
+                QString ulName = name + " UL";
+                if (freqMap.contains(freq))
+                    freqMap[freq].rawNames.append(ulName);
+                else
+                    freqMap[freq] = {QStringList{ulName}, mapSatelliteModeToModulation(mode), 12500, "UL"};
+            }
+        }
+    }
+
+    // Create bookmarks from grouped frequencies
+    int addedCount = 0;
+    for (auto it = freqMap.begin(); it != freqMap.end(); ++it)
+    {
+        BookmarkInfo info;
+        info.frequency = it.key();
+
+        // Group names by family and create condensed display
+        QStringList& rawNames = it.value().rawNames;
+        rawNames.removeDuplicates();
+
+        // Count occurrences of each base name
+        QMap<QString, int> baseNameCounts;
+        for (const QString& name : rawNames)
+        {
+            QString baseName = getBaseName(name);
+            baseNameCounts[baseName]++;
+        }
+
+        // Build display name with counts for families
+        QStringList displayParts;
+        QSet<QString> processedBases;
+        for (const QString& name : rawNames)
+        {
+            QString baseName = getBaseName(name);
+            if (processedBases.contains(baseName))
+                continue;
+            processedBases.insert(baseName);
+
+            int count = baseNameCounts[baseName];
+            if (count > 1)
+                displayParts.append(QString("%1 (x%2)").arg(baseName).arg(count));
+            else
+                displayParts.append(name);
+        }
+
+        // Limit display length
+        if (displayParts.size() <= 2)
+            info.name = displayParts.join(", ");
+        else
+            info.name = displayParts.mid(0, 2).join(", ") + QString(" +%1").arg(displayParts.size() - 2);
+
+        info.modulation = it.value().modulation;
+        info.bandwidth = it.value().bandwidth;
+        info.tags.append(amsatTag);
+        Bookmarks::Get().add(info);
+        addedCount++;
+    }
+
+    Bookmarks::Get().save();
+    bookmarksTableModel->update();
+    updateTags();
+
+    QMessageBox::information(this, "AMSAT Update Complete",
+        QString("Added %1 frequency bookmarks from %2 satellite entries.")
+            .arg(addedCount).arg(satellites.size()));
+}
+
+QString DockBookmarks::mapSatelliteModeToModulation(const QString& mode)
+{
+    QString modeLower = mode.toLower();
+
+    // SSB modes (typically used for linear transponders)
+    if (modeLower.contains("ssb") || modeLower == "v" || modeLower == "u" ||
+        modeLower == "l" || modeLower == "s" || modeLower == "a" || modeLower == "b" ||
+        modeLower == "j" || modeLower == "t")
+        return "USB";
+
+    // FM modes
+    if (modeLower.contains("fm") || modeLower.contains("nbfm"))
+        return "Narrow FM";
+
+    // CW modes
+    if (modeLower.contains("cw"))
+        return "CW-U";
+
+    // Digital modes - use USB for audio-based digital
+    if (modeLower.contains("bpsk") || modeLower.contains("afsk") ||
+        modeLower.contains("fsk") || modeLower.contains("rtty") ||
+        modeLower.contains("sstv"))
+        return "USB";
+
+    // Packet/data modes - typically FM
+    if (modeLower.contains("packet") || modeLower.contains("aprs") ||
+        modeLower.contains("ax.25") || modeLower.contains("9600") ||
+        modeLower.contains("1200"))
+        return "Narrow FM";
+
+    // GMSK and similar
+    if (modeLower.contains("gmsk") || modeLower.contains("gfsk"))
+        return "Narrow FM";
+
+    // LoRa
+    if (modeLower.contains("lora"))
+        return "Narrow FM";
+
+    // Default to USB for unknown modes
+    return "USB";
 }
