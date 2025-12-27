@@ -25,6 +25,7 @@
 #include <QSettings>
 #include <QDebug>
 #include <QVariant>
+#include <QColorDialog>
 #include "dockfft.h"
 #include "ui_dockfft.h"
 
@@ -83,6 +84,18 @@ DockFft::DockFft(QWidget *parent) :
     ui->colorPicker->insertColor(QColor(0xFF,0xC8,0xC8,0xFF), "Pink");
     ui->colorPicker->insertColor(QColor(0xB7,0xE0,0xFF,0xFF), "Blue");
     ui->colorPicker->insertColor(QColor(0x7F,0xFA,0xFA,0xFF), "Cyan");
+
+    // Initialize color buttons with default colors
+    m_bgColor = QColor(0x1F, 0x1D, 0x1D, 0xFF);
+    m_gridColor = QColor(0x60, 0x60, 0x60, 0x80);
+    m_maxHoldColor = QColor(0xFF, 0x60, 0x60, 0xFF);  // Light red
+    m_minHoldColor = QColor(0x60, 0x60, 0xFF, 0xFF);  // Light blue
+    m_peakColor = QColor(0xFF, 0xFF, 0x00, 0xFF);     // Yellow
+    updateColorButton(ui->bgColorButton, m_bgColor);
+    updateColorButton(ui->gridColorButton, m_gridColor);
+    updateColorButton(ui->maxHoldColorButton, m_maxHoldColor);
+    updateColorButton(ui->minHoldColorButton, m_minHoldColor);
+    updateColorButton(ui->peakColorButton, m_peakColor);
 
     ui->cmapComboBox->addItem(tr("Gqrx"), "gqrx");
     ui->cmapComboBox->addItem(tr("Viridis"), "viridis");
@@ -295,6 +308,43 @@ void DockFft::saveSettings(QSettings *settings)
     else
         settings->remove("pandapter_color");
 
+    if (m_bgColor != QColor(0x1F,0x1D,0x1D,0xFF))
+        settings->setValue("fft_bg_color", m_bgColor);
+    else
+        settings->remove("fft_bg_color");
+
+    if (m_gridColor != QColor(0x60,0x60,0x60,0x80))
+        settings->setValue("fft_grid_color", m_gridColor);
+    else
+        settings->remove("fft_grid_color");
+
+    intval = ui->gridStyleCombo->currentIndex();
+    if (intval != 0)
+        settings->setValue("fft_grid_style", intval);
+    else
+        settings->remove("fft_grid_style");
+
+    intval = ui->bookmarkFontSizeSpinBox->value();
+    if (intval != 14)  // 14 is default
+        settings->setValue("bookmark_font_size", intval);
+    else
+        settings->remove("bookmark_font_size");
+
+    if (m_maxHoldColor != QColor(0xFF, 0x60, 0x60, 0xFF))
+        settings->setValue("max_hold_color", m_maxHoldColor);
+    else
+        settings->remove("max_hold_color");
+
+    if (m_minHoldColor != QColor(0x60, 0x60, 0xFF, 0xFF))
+        settings->setValue("min_hold_color", m_minHoldColor);
+    else
+        settings->remove("min_hold_color");
+
+    if (m_peakColor != QColor(0xFF, 0xFF, 0x00, 0xFF))
+        settings->setValue("peak_color", m_peakColor);
+    else
+        settings->remove("peak_color");
+
     if (ui->fillCheckBox->isChecked())
         settings->setValue("pandapter_fill", true);
     else
@@ -463,6 +513,36 @@ void DockFft::readSettings(QSettings *settings)
 
     color = settings->value("pandapter_color", QColor(0xFF,0xFF,0xFF,0xFF)).value<QColor>();
     ui->colorPicker->setCurrentColor(color);
+
+    m_bgColor = settings->value("fft_bg_color", QColor(0x1F,0x1D,0x1D,0xFF)).value<QColor>();
+    updateColorButton(ui->bgColorButton, m_bgColor);
+    emit fftBgColorChanged(m_bgColor);
+
+    m_gridColor = settings->value("fft_grid_color", QColor(0x60,0x60,0x60,0x80)).value<QColor>();
+    updateColorButton(ui->gridColorButton, m_gridColor);
+    emit fftGridColorChanged(m_gridColor);
+
+    intval = settings->value("fft_grid_style", 0).toInt(&conv_ok);
+    if (conv_ok)
+        ui->gridStyleCombo->setCurrentIndex(intval);
+    emit fftGridStyleChanged(intval);
+
+    intval = settings->value("bookmark_font_size", 14).toInt(&conv_ok);
+    if (conv_ok)
+        ui->bookmarkFontSizeSpinBox->setValue(intval);
+    emit bookmarkFontSizeChanged(intval);
+
+    m_maxHoldColor = settings->value("max_hold_color", QColor(0xFF, 0x60, 0x60, 0xFF)).value<QColor>();
+    updateColorButton(ui->maxHoldColorButton, m_maxHoldColor);
+    emit maxHoldColorChanged(m_maxHoldColor);
+
+    m_minHoldColor = settings->value("min_hold_color", QColor(0x60, 0x60, 0xFF, 0xFF)).value<QColor>();
+    updateColorButton(ui->minHoldColorButton, m_minHoldColor);
+    emit minHoldColorChanged(m_minHoldColor);
+
+    m_peakColor = settings->value("peak_color", QColor(0xFF, 0xFF, 0x00, 0xFF)).value<QColor>();
+    updateColorButton(ui->peakColorButton, m_peakColor);
+    emit peakColorChanged(m_peakColor);
 
     bool_val = settings->value("pandapter_fill", false).toBool();
     ui->fillCheckBox->setChecked(bool_val);
@@ -700,6 +780,80 @@ void DockFft::on_demodButton_clicked(void)
 void DockFft::on_colorPicker_colorChanged(const QColor &color)
 {
     emit fftColorChanged(color);
+}
+
+/** FFT background color button clicked. */
+void DockFft::on_bgColorButton_clicked()
+{
+    QColor color = QColorDialog::getColor(m_bgColor, this, tr("FFT Background Color"));
+    if (color.isValid()) {
+        m_bgColor = color;
+        updateColorButton(ui->bgColorButton, m_bgColor);
+        emit fftBgColorChanged(m_bgColor);
+    }
+}
+
+/** FFT grid color button clicked. */
+void DockFft::on_gridColorButton_clicked()
+{
+    QColor color = QColorDialog::getColor(m_gridColor, this, tr("FFT Grid Color"));
+    if (color.isValid()) {
+        m_gridColor = color;
+        updateColorButton(ui->gridColorButton, m_gridColor);
+        emit fftGridColorChanged(m_gridColor);
+    }
+}
+
+/** FFT grid style changed. */
+void DockFft::on_gridStyleCombo_currentIndexChanged(int index)
+{
+    emit fftGridStyleChanged(index);
+}
+
+/** Bookmark font size changed. */
+void DockFft::on_bookmarkFontSizeSpinBox_valueChanged(int value)
+{
+    emit bookmarkFontSizeChanged(value);
+}
+
+/** Max hold color button clicked. */
+void DockFft::on_maxHoldColorButton_clicked()
+{
+    QColor color = QColorDialog::getColor(m_maxHoldColor, this, tr("Max Hold Color"));
+    if (color.isValid()) {
+        m_maxHoldColor = color;
+        updateColorButton(ui->maxHoldColorButton, m_maxHoldColor);
+        emit maxHoldColorChanged(m_maxHoldColor);
+    }
+}
+
+/** Min hold color button clicked. */
+void DockFft::on_minHoldColorButton_clicked()
+{
+    QColor color = QColorDialog::getColor(m_minHoldColor, this, tr("Min Hold Color"));
+    if (color.isValid()) {
+        m_minHoldColor = color;
+        updateColorButton(ui->minHoldColorButton, m_minHoldColor);
+        emit minHoldColorChanged(m_minHoldColor);
+    }
+}
+
+/** Peak marker color button clicked. */
+void DockFft::on_peakColorButton_clicked()
+{
+    QColor color = QColorDialog::getColor(m_peakColor, this, tr("Peak Marker Color"));
+    if (color.isValid()) {
+        m_peakColor = color;
+        updateColorButton(ui->peakColorButton, m_peakColor);
+        emit peakColorChanged(m_peakColor);
+    }
+}
+
+/** Update button background to show the current color. */
+void DockFft::updateColorButton(QPushButton *btn, const QColor &color)
+{
+    QString style = QString("background-color: %1; border: 1px solid gray;").arg(color.name());
+    btn->setStyleSheet(style);
 }
 
 /** FFT plot fill button toggled. */

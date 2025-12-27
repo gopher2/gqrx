@@ -165,6 +165,12 @@ CPlotter::CPlotter(QWidget *parent) : QFrame(parent)
     m_Peaks = QMap<int,qreal>();
     enablePeakDetect(false);
 
+    m_FftBgColor = QColor::fromRgba(PLOTTER_BGD_COLOR);
+    m_FftGridColor = QColor::fromRgba(PLOTTER_GRID_COLOR);
+    m_FftGridPattern = {1, 4};  // Small dots with spacing
+    m_MaxHoldColor = QColor(0xFF, 0x60, 0x60, 0xFF);  // Light red
+    m_MinHoldColor = QColor(0x60, 0x60, 0xFF, 0xFF);  // Light blue
+    m_PeakColor = QColor(0xFF, 0xFF, 0x00, 0xFF);     // Yellow
     setFftPlotColor(QColor(0xFF,0xFF,0xFF,0xFF));
     enableFftFill(false);
 
@@ -289,29 +295,44 @@ void CPlotter::mouseMoveEvent(QMouseEvent* event)
                     showToolTip(event, QString("Marker B: %1 kHz").arg(m_MarkerFreqB/1.e3, 0, 'f', 3));
             }
             else
-            {	//if not near any grab boundaries
-                if (NOCAP != m_CursorCaptured)
-                {
-                    setCursor(QCursor(Qt::ArrowCursor));
-                    m_CursorCaptured = NOCAP;
-                }
-                if (m_TooltipsEnabled)
-                {
-                    QString toolTipText;
-                    qint64 hoverFrequency = freqFromX(px);
-                    toolTipText = QString("%1 kHz\nΔ %2 kHz")
-                                          .arg(hoverFrequency/1.e3, 0, 'f', 3)
-                                          .arg(locale().toString((hoverFrequency - m_DemodCenterFreq)/1.e3, 'f', 3));
-
-                    QFontMetricsF metrics(m_Font);
-                    qreal bandTopY = ((qreal)h) - metrics.height() - 2 * VER_MARGIN - m_BandPlanHeight;
-                    QList<BandInfo> hoverBands = BandPlan::Get().getBandsEncompassing(hoverFrequency);
-                    if(m_BandPlanEnabled && py > bandTopY && !hoverBands.empty())
-                    {
-                        for (auto & hoverBand : hoverBands)
-                            toolTipText.append("\n" + hoverBand.name);
+            {
+                // Check if hovering over a pinned peak label
+                bool onPeakLabel = false;
+                for (auto it = m_PinnedPeaks.begin(); it != m_PinnedPeaks.end(); ++it) {
+                    if (it.value().labelRect.contains(QPointF(px, py))) {
+                        if (PEAK_LABEL != m_CursorCaptured)
+                            setCursor(QCursor(Qt::OpenHandCursor));
+                        m_CursorCaptured = PEAK_LABEL;
+                        m_DraggedPeakFreq = it.key();
+                        onPeakLabel = true;
+                        break;
                     }
-                    showToolTip(event, toolTipText);
+                }
+                if (!onPeakLabel)
+                {	//if not near any grab boundaries
+                    if (NOCAP != m_CursorCaptured)
+                    {
+                        setCursor(QCursor(Qt::ArrowCursor));
+                        m_CursorCaptured = NOCAP;
+                    }
+                    if (m_TooltipsEnabled)
+                    {
+                        QString toolTipText;
+                        qint64 hoverFrequency = freqFromX(px);
+                        toolTipText = QString("%1 kHz\nΔ %2 kHz")
+                                              .arg(hoverFrequency/1.e3, 0, 'f', 3)
+                                              .arg(locale().toString((hoverFrequency - m_DemodCenterFreq)/1.e3, 'f', 3));
+
+                        QFontMetricsF metrics(m_Font);
+                        qreal bandTopY = ((qreal)h) - metrics.height() - 2 * VER_MARGIN - m_BandPlanHeight;
+                        QList<BandInfo> hoverBands = BandPlan::Get().getBandsEncompassing(hoverFrequency);
+                        if(m_BandPlanEnabled && py > bandTopY && !hoverBands.empty())
+                        {
+                            for (auto & hoverBand : hoverBands)
+                                toolTipText.append("\n" + hoverBand.name);
+                        }
+                        showToolTip(event, toolTipText);
+                    }
                 }
             }
             m_GrabPosition = 0;
@@ -542,6 +563,29 @@ void CPlotter::mouseMoveEvent(QMouseEvent* event)
             m_CursorCaptured = NOCAP;
         }
     }
+    else if (PEAK_LABEL == m_CursorCaptured)
+    {
+        // Dragging a pinned peak label
+        if (event->buttons() & Qt::LeftButton)
+        {
+            setCursor(QCursor(Qt::ClosedHandCursor));
+            auto it = m_PinnedPeaks.find(m_DraggedPeakFreq);
+            if (it != m_PinnedPeaks.end()) {
+                // Update label position based on drag delta
+                int deltaX = px - m_GrabPosition;
+                int deltaY = py - m_Yzero;
+                it.value().labelOffsetX += deltaX;  // X offset from frequency
+                it.value().labelY += deltaY;        // Absolute Y position
+                m_GrabPosition = px;
+                m_Yzero = py;
+            }
+        }
+        else
+        {
+            setCursor(QCursor(Qt::ArrowCursor));
+            m_CursorCaptured = NOCAP;
+        }
+    }
     else
     {
         // cursor not captured
@@ -736,23 +780,39 @@ void CPlotter::mousePressEvent(QMouseEvent * event)
 
                 // left-click with no modifiers: set center frequency
                 else if (mods == 0) {
-                    int best = -1;
+                    // First check if clicking on an existing pinned peak label
+                    bool clickedOnLabel = false;
+                    for (auto it = m_PinnedPeaks.begin(); it != m_PinnedPeaks.end(); ++it) {
+                        if (it.value().labelRect.contains(QPointF(px, py))) {
+                            // Single click on label starts drag
+                            m_CursorCaptured = PEAK_LABEL;
+                            m_DraggedPeakFreq = it.key();
+                            m_GrabPosition = px;
+                            m_Yzero = py;
+                            clickedOnLabel = true;
+                            break;
+                        }
+                    }
 
-                    if (m_PeakDetectActive > 0)
-                        best = getNearestPeak(pt);
-                    if (best != -1)
-                        m_DemodCenterFreq = freqFromX(best);
-                    else
-                        m_DemodCenterFreq = roundFreq(freqFromX(px), m_ClickResolution);
+                    if (!clickedOnLabel) {
+                        int best = -1;
 
-                    // if cursor not captured set demod frequency and start demod box capture
-                    emit newDemodFreq(m_DemodCenterFreq, m_DemodCenterFreq - m_CenterFreq);
+                        if (m_PeakDetectActive > 0)
+                            best = getNearestPeak(pt);
+                        if (best != -1)
+                            m_DemodCenterFreq = freqFromX(best);
+                        else
+                            m_DemodCenterFreq = roundFreq(freqFromX(px), m_ClickResolution);
 
-                    // save initial grab position from m_DemodFreqX
-                    // setCursor(QCursor(Qt::CrossCursor));
-                    m_CursorCaptured = CENTER;
-                    m_GrabPosition = 1;
-                    updateOverlay();
+                        // if cursor not captured set demod frequency and start demod box capture
+                        emit newDemodFreq(m_DemodCenterFreq, m_DemodCenterFreq - m_CenterFreq);
+
+                        // save initial grab position from m_DemodFreqX
+                        // setCursor(QCursor(Qt::CrossCursor));
+                        m_CursorCaptured = CENTER;
+                        m_GrabPosition = 1;
+                        updateOverlay();
+                    }
                 }
             }
             else if (event->buttons() == Qt::MiddleButton)
@@ -844,9 +904,87 @@ void CPlotter::mouseReleaseEvent(QMouseEvent * event)
             setCursor(QCursor(Qt::OpenHandCursor));
             m_Xzero = -1;
         }
+        else if (PEAK_LABEL == m_CursorCaptured)
+        {
+            setCursor(QCursor(Qt::ArrowCursor));
+            m_CursorCaptured = NOCAP;
+            m_DraggedPeakFreq = 0;
+        }
     }
 }
 
+
+void CPlotter::mouseDoubleClickEvent(QMouseEvent * event)
+{
+    QPoint pt = event->pos();
+    int px = qRound((qreal)pt.x() * m_DPR);
+    int py = qRound((qreal)pt.y() * m_DPR);
+    QPoint ppos = QPoint(px, py);
+
+    if (event->buttons() == Qt::LeftButton)
+    {
+        // Check if double-clicking on a peak circle (when peak detection is active)
+        if (m_PeakDetectActive)
+        {
+            int peakX = getNearestPeak(pt);
+            if (peakX != -1)
+            {
+                qint64 freq = freqFromX(peakX);
+
+                // Snap to nearby bookmark if within 1 kHz tolerance
+                const qint64 snapTolerance = 1000;  // 1 kHz
+                for (const auto & tag : m_Taglist) {
+                    qint64 bookmarkFreq = tag.second;
+                    if (qAbs(freq - bookmarkFreq) <= snapTolerance) {
+                        freq = bookmarkFreq;
+                        break;
+                    }
+                }
+
+                // Toggle pinned peak label at this frequency
+                if (m_PinnedPeaks.contains(freq)) {
+                    m_PinnedPeaks.remove(freq);
+                } else {
+                    PinnedPeakInfo info;
+                    info.labelOffsetX = 20;   // Default offset to the right
+                    info.labelY = 0;          // Will be initialized from peak position on first draw
+                    info.labelYInitialized = false;
+                    m_PinnedPeaks[freq] = info;
+                }
+                return;
+            }
+        }
+
+        // Check if double-clicking on a bookmark tag
+        for (const auto & tag : m_Taglist)
+        {
+            if (tag.first.contains(ppos))
+            {
+                qint64 freq = tag.second;
+                // Toggle pinned peak label at this frequency
+                if (m_PinnedPeaks.contains(freq)) {
+                    m_PinnedPeaks.remove(freq);
+                } else {
+                    PinnedPeakInfo info;
+                    info.labelOffsetX = 20;   // Default offset to the right
+                    info.labelY = 0;          // Will be initialized from peak position on first draw
+                    info.labelYInitialized = false;
+                    m_PinnedPeaks[freq] = info;
+                }
+                return;
+            }
+        }
+
+        // Check if double-clicking on a pinned label (to remove it)
+        for (auto it = m_PinnedPeaks.begin(); it != m_PinnedPeaks.end(); ++it) {
+            if (it.value().labelRect.contains(QPointF(px, py))) {
+                // Remove this pinned label
+                m_PinnedPeaks.erase(it);
+                return;
+            }
+        }
+    }
+}
 
 // Make a single zoom step on the X axis.
 void CPlotter::zoomStepX(float step, int x)
@@ -1060,7 +1198,7 @@ void CPlotter::resizeEvent(QResizeEvent* )
         m_OverlayPixmap.fill(Qt::transparent);
 
         m_2DPixmap = QPixmap(w, plotHeight);
-        m_2DPixmap.fill(QColor::fromRgba(PLOTTER_BGD_COLOR));
+        m_2DPixmap.fill(m_FftBgColor);
 
         // No waterfall, use null image
         if (wfHeight == 0)
@@ -1191,7 +1329,7 @@ void CPlotter::draw(bool newData)
             }
 
             // Draw overlay over plot
-            m_2DPixmap.fill(QColor::fromRgba(PLOTTER_BGD_COLOR));
+            m_2DPixmap.fill(m_FftBgColor);
             QPainter painter(&m_2DPixmap);
             painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
             painter.drawPixmap(QPointF(0.0, 0.0), m_OverlayPixmap);
@@ -1555,8 +1693,7 @@ void CPlotter::draw(bool newData)
     {
         tlast_plot_drawn_ms = tnow_ms;
 
-        QColor bgColor = QColor::fromRgba(PLOTTER_BGD_COLOR);
-        m_2DPixmap.fill(bgColor);
+        m_2DPixmap.fill(m_FftBgColor);
         QPainter painter2(&m_2DPixmap);
         painter2.translate(QPointF(0.5, 0.5));
 
@@ -1679,7 +1816,7 @@ void CPlotter::draw(bool newData)
                 m_holdLineBuf[i] = QPointF(ixPlot, yMaxHoldD);
             }
             // NOT scaling to DPR due to performance
-            painter2.setPen(m_HoldLineCol);
+            painter2.setPen(m_MaxHoldColor);
             painter2.drawPolyline(m_holdLineBuf, npts);
 
             m_MaxHoldValid = true;
@@ -1699,7 +1836,7 @@ void CPlotter::draw(bool newData)
                 m_holdLineBuf[i] = QPointF(ixPlot, yMinHoldD);
             }
             // NOT scaling to DPR due to performance
-            painter2.setPen(m_HoldLineCol);
+            painter2.setPen(m_MinHoldColor);
             painter2.drawPolyline(m_holdLineBuf, npts);
 
             m_MinHoldValid = true;
@@ -1821,7 +1958,7 @@ void CPlotter::draw(bool newData)
                 m_PeakPixmap.fill(Qt::transparent);
                 QPainter peakPainter(&m_PeakPixmap);
                 peakPainter.translate(half, half);
-                QPen peakPen(m_MainLineCol, m_DPR);
+                QPen peakPen(m_PeakColor, m_DPR);
                 QPen peakShadowPen(Qt::black, m_DPR);
                 peakPainter.setPen(peakShadowPen);
                 peakPainter.drawEllipse(
@@ -1840,10 +1977,161 @@ void CPlotter::draw(bool newData)
                 const qreal peakv = m_Peaks.value(peakx);
                 painter2.drawPixmap(QPointF(peakxPlot - peakPixmapOffset, peakv - peakPixmapOffset), m_PeakPixmap);
             }
+
+            // Draw pinned peak labels with leader lines
+            if (!m_PinnedPeaks.isEmpty()) {
+                QFont peakFont = m_Font;
+                peakFont.setPointSizeF(m_Font.pointSizeF() * 0.9);
+                QFontMetricsF peakMetrics(peakFont);
+                painter2.setFont(peakFont);
+
+                for (auto it = m_PinnedPeaks.begin(); it != m_PinnedPeaks.end(); ++it) {
+                    qint64 freq = it.key();
+                    PinnedPeakInfo &info = it.value();
+
+                    // Find screen x position for this frequency
+                    // xFromFreq already returns DPR-scaled coordinates
+                    qreal peakX = (qreal)xFromFreq(freq);
+                    int peakXInt = (int)peakX;
+
+                    // Skip if frequency is off-screen (zoomed/panned away)
+                    if (peakX < 0 || peakX > w) {
+                        continue;
+                    }
+
+                    // Find the peak circle position from m_Peaks (stable peak markers)
+                    // Look for nearest peak within a small range
+                    qreal peakY = plotHeight;
+                    float peakdB = m_PandMindB;
+                    bool foundPeak = false;
+
+                    // Search for peak circle near this frequency
+                    auto peakIt = m_Peaks.lowerBound(peakXInt - 5);
+                    auto peakEnd = m_Peaks.upperBound(peakXInt + 5);
+                    qreal bestDist = 1e10;
+                    for (; peakIt != peakEnd; ++peakIt) {
+                        qreal dist = qAbs(peakIt.key() - peakXInt);
+                        if (dist < bestDist) {
+                            bestDist = dist;
+                            peakY = peakIt.value();
+                            foundPeak = true;
+                        }
+                    }
+
+                    // Calculate dB from Y position for display (only valid if peak found)
+                    if (foundPeak) {
+                        peakdB = m_PandMaxdB - (float)(peakY / (qreal)panddBGainFactor);
+                    }
+
+                    // Label text - show frequency and dB (or --- if peak not visible)
+                    QString freqText = QString::number((double)freq / 1.0e6, 'f', 4) + " MHz";
+                    QString dbText = foundPeak ? QString::number((double)peakdB, 'f', 1) + " dB" : "--- dB";
+                    qreal textWidth = qMax(peakMetrics.horizontalAdvance(freqText),
+                                           peakMetrics.horizontalAdvance(dbText)) + 10;
+                    qreal textHeight = peakMetrics.height() * 2 + 6;
+
+                    // Initialize label Y position from peak on first draw
+                    if (!info.labelYInitialized) {
+                        info.labelY = peakY - 60;  // Position above the peak
+                        info.labelYInitialized = true;
+                    }
+
+                    // Label box position:
+                    // - X follows frequency (offset from peakX)
+                    // - Y is fixed (doesn't bounce with signal)
+                    qreal labelX = peakX + info.labelOffsetX;
+                    qreal labelY = info.labelY;
+
+                    // Keep label on screen
+                    labelX = qBound(0.0, labelX, w - textWidth);
+                    labelY = qBound(0.0, labelY, plotHeight - textHeight);
+
+                    // Store actual label rect for hit testing
+                    info.labelRect = QRectF(labelX, labelY, textWidth, textHeight);
+
+                    // Draw leader line from label to peak circle edge (only if peak is visible)
+                    if (foundPeak) {
+                        QPointF peakCenter(peakX, peakY);
+                        qreal circleRadius = 5.0 * m_DPR;
+                        qreal arrowSize = 6 * m_DPR;
+
+                        // Find the closest connection point on the label box
+                        // Check all 8 points: 4 edge midpoints + 4 corners
+                        QPointF candidates[8] = {
+                            QPointF(labelX + textWidth/2, labelY),              // Top center
+                            QPointF(labelX + textWidth/2, labelY + textHeight), // Bottom center
+                            QPointF(labelX, labelY + textHeight/2),             // Left center
+                            QPointF(labelX + textWidth, labelY + textHeight/2), // Right center
+                            QPointF(labelX, labelY),                            // Top-left corner
+                            QPointF(labelX + textWidth, labelY),                // Top-right corner
+                            QPointF(labelX, labelY + textHeight),               // Bottom-left corner
+                            QPointF(labelX + textWidth, labelY + textHeight)    // Bottom-right corner
+                        };
+
+                        QPointF lineStart = candidates[0];
+                        qreal minDist = 1e10;
+                        for (int i = 0; i < 8; ++i) {
+                            qreal cdx = candidates[i].x() - peakCenter.x();
+                            qreal cdy = candidates[i].y() - peakCenter.y();
+                            qreal dist = cdx*cdx + cdy*cdy;
+                            if (dist < minDist) {
+                                minDist = dist;
+                                lineStart = candidates[i];
+                            }
+                        }
+
+                        // Calculate direction and length
+                        qreal dx = peakCenter.x() - lineStart.x();
+                        qreal dy = peakCenter.y() - lineStart.y();
+                        qreal len = qSqrt(dx*dx + dy*dy);
+
+                        if (len > circleRadius + arrowSize) {
+                            // Normalize direction
+                            dx /= len;
+                            dy /= len;
+
+                            // Line ends at circle edge (offset back from center by radius)
+                            QPointF lineEnd(peakCenter.x() - circleRadius * dx,
+                                            peakCenter.y() - circleRadius * dy);
+
+                            painter2.setPen(QPen(m_PeakColor, m_DPR));
+                            painter2.drawLine(lineStart, lineEnd);
+
+                            // Perpendicular direction for arrowhead
+                            qreal perpX = -dy;
+                            qreal perpY = dx;
+
+                            // Arrowhead points at circle edge
+                            QPointF arrow1(lineEnd.x() - arrowSize*dx + arrowSize*0.5*perpX,
+                                           lineEnd.y() - arrowSize*dy + arrowSize*0.5*perpY);
+                            QPointF arrow2(lineEnd.x() - arrowSize*dx - arrowSize*0.5*perpX,
+                                           lineEnd.y() - arrowSize*dy - arrowSize*0.5*perpY);
+                            painter2.setBrush(m_PeakColor);
+                            QPolygonF arrowHead;
+                            arrowHead << lineEnd << arrow1 << arrow2;
+                            painter2.drawPolygon(arrowHead);
+                            painter2.setBrush(Qt::NoBrush);
+                        }
+                    }
+
+                    // Draw label background
+                    painter2.fillRect(info.labelRect, QColor(0, 0, 0, 180));
+                    painter2.setPen(QPen(m_PeakColor, m_DPR));
+                    painter2.drawRect(info.labelRect);
+
+                    // Draw label text (two lines)
+                    painter2.setPen(m_PeakColor);
+                    painter2.drawText(QPointF(labelX + 5, labelY + peakMetrics.ascent() + 2), freqText);
+                    painter2.drawText(QPointF(labelX + 5, labelY + peakMetrics.height() + peakMetrics.ascent() + 4), dbText);
+                }
+                painter2.setFont(m_Font);
+            }
         }
 
         // Update the overlay if needed
-        if (m_DrawOverlay)
+        // Note: When bookmarks are enabled, overlay is redrawn every frame
+        // because bookmark lines depend on current FFT data
+        if (m_DrawOverlay || m_BookmarksEnabled || m_DXCSpotsEnabled)
         {
             drawOverlay();
             m_DrawOverlay = false;
@@ -2049,11 +2337,15 @@ void CPlotter::drawOverlay()
     if (m_BookmarksEnabled || m_DXCSpotsEnabled)
     {
         m_Taglist.clear();
-        static const QFontMetricsF fm(painter.font());
-        static const qreal fontHeight = fm.ascent() + 1;
-        static const qreal slant = 5;
-        static const qreal levelHeight = fontHeight + 5;
-        static const qreal nLevels = h / (levelHeight + slant);
+        // Use configurable bookmark font size
+        QFont bookmarkFont = painter.font();
+        bookmarkFont.setPointSize(m_BookmarkFontSize);
+        painter.setFont(bookmarkFont);
+        QFontMetricsF fm(bookmarkFont);
+        qreal fontHeight = fm.ascent() + 1;
+        qreal slant = 5;
+        qreal levelHeight = fontHeight + 5;
+        qreal nLevels = h / (levelHeight + slant);
         if (m_BookmarksEnabled)
         {
             tags = Bookmarks::Get().getBookmarksInRange(m_CenterFreq + m_FftCenter - m_Span / 2,
@@ -2105,9 +2397,33 @@ void CPlotter::drawOverlay()
 
             QColor color = QColor(tag.GetColor());
             color.setAlpha(100);
-            // Vertical line
+            // Vertical line - dynamically stop above FFT signal
+            qreal lineBottom = xAxisTop;
+            const int ix = (int)x;
+            if (ix >= 0 && ix < m_fftDataSize)
+            {
+                const qreal plotHeight = m_2DPixmap.height();
+                const float panddBGainFactor = (float)plotHeight / fabsf(m_PandMaxdB - m_PandMindB);
+                // Use max hold if active, otherwise current FFT data based on plot mode
+                float fftVal;
+                if (m_MaxHoldActive)
+                    fftVal = m_fftMaxHoldBuf[ix];
+                else if (m_PlotMode == PLOT_MODE_AVG)
+                    fftVal = m_fftAvgBuf[ix];
+                else
+                    fftVal = m_fftMaxBuf[ix];
+                if (fftVal > 0.0f)
+                {
+                    const qreal ySignal = (qreal)std::max(std::min(
+                        panddBGainFactor * (m_PandMaxdB - 10.0f * log10f(fftVal)),
+                        (float)plotHeight), 0.0f);
+                    // Clearance for peak markers plus padding
+                    const qreal clearance = 12.0 * m_DPR + 10.0;
+                    lineBottom = std::min(lineBottom, ySignal - clearance);
+                }
+            }
             painter.setPen(QPen(color, m_DPR, Qt::DashLine));
-            painter.drawLine(QPointF(x, levelNHeightBottomSlant), QPointF(x, xAxisTop));
+            painter.drawLine(QPointF(x, levelNHeightBottomSlant), QPointF(x, lineBottom));
 
             // Horizontal line
             painter.setPen(QPen(color, m_DPR, Qt::SolidLine));
@@ -2124,6 +2440,8 @@ void CPlotter::drawOverlay()
                              fontHeight, Qt::AlignVCenter | Qt::AlignHCenter,
                              tag.name);
         }
+        // Restore original font
+        painter.setFont(m_Font);
     }
     else
     {
@@ -2209,7 +2527,13 @@ void CPlotter::drawOverlay()
     adjoffset = pixperdiv * (qreal) (m_StartFreqAdj - StartFreq) / (qreal) m_FreqPerDiv;
 
     // Hairline for grid lines
-    painter.setPen(QPen(QColor::fromRgba(PLOTTER_GRID_COLOR), 0.0, Qt::DotLine));
+    QPen gridPen(m_FftGridColor);
+    gridPen.setWidthF(0.0);
+    if (!m_FftGridPattern.isEmpty()) {
+        gridPen.setStyle(Qt::CustomDashLine);
+        gridPen.setDashPattern(m_FftGridPattern);
+    }
+    painter.setPen(gridPen);
     for (int i = 0; i <= m_HorDivs; i++)
     {
         qreal xD = (double)i * pixperdiv + adjoffset;
@@ -2224,6 +2548,13 @@ void CPlotter::drawOverlay()
         qreal xD = (qreal)i * pixperdiv + adjoffset;
         if (xD > m_YAxisWidth)
         {
+            // Calculate text width for background
+            qreal textWidth = metrics.boundingRect(m_HDivText[i]).width();
+            qreal padding = 4;
+            QRectF bgRect(xD - textWidth/2 - padding, fLabelTop,
+                          textWidth + padding*2, metrics.height());
+            // Draw shaded background
+            painter.fillRect(bgRect, QColor(0, 0, 0, 160));
             // Shadow
             QRectF shadowRect(xD + shadowOffset - w/2, fLabelTop + shadowOffset,
                               w, metrics.height());
@@ -2256,8 +2587,8 @@ void CPlotter::drawOverlay()
                      << "mindbadj =" << mindbadj << "dbstepsize =" << dbstepsize
                      << "pixperdiv =" << pixperdiv << "adjoffset =" << adjoffset;
 
-    // Hairline for grid lines
-    painter.setPen(QPen(QColor::fromRgba(PLOTTER_GRID_COLOR), 0.0, Qt::DotLine));
+    // Hairline for grid lines (reuse gridPen from horizontal grid)
+    painter.setPen(gridPen);
     for (int i = 0; i <= m_VerDivs; i++)
     {
         qreal y = h - ((double)i * pixperdiv + adjoffset);
@@ -2539,13 +2870,92 @@ void CPlotter::moveToDemodFreq()
 void CPlotter::setFftPlotColor(const QColor& color)
 {
     m_PeakPixmap = QPixmap();
-    QColor bgColor = QColor::fromRgba(PLOTTER_BGD_COLOR);
-    m_FftFillCol = blend(bgColor, color, 26);
+    m_FftFillCol = blend(m_FftBgColor, color, 26);
     m_MainLineCol = color;
-    m_HoldLineCol = blend(bgColor, color, 80);
-    m_FilledModeFillCol = blend(bgColor, color, 80);
-    m_FilledModeMaxLineCol = blend(bgColor, color, 128);
-    m_FilledModeAvgLineCol = blend(bgColor, QColor(Qt::cyan), 192);
+    m_FilledModeFillCol = blend(m_FftBgColor, color, 80);
+    m_FilledModeMaxLineCol = blend(m_FftBgColor, color, 128);
+    m_FilledModeAvgLineCol = blend(m_FftBgColor, QColor(Qt::cyan), 192);
+}
+
+/** Set FFT background color. */
+void CPlotter::setFftBgColor(const QColor& color)
+{
+    m_FftBgColor = color;
+    // Update derived colors
+    m_FftFillCol = blend(m_FftBgColor, m_MainLineCol, 26);
+    m_FilledModeFillCol = blend(m_FftBgColor, m_MainLineCol, 80);
+    m_FilledModeMaxLineCol = blend(m_FftBgColor, m_MainLineCol, 128);
+    m_FilledModeAvgLineCol = blend(m_FftBgColor, QColor(Qt::cyan), 192);
+    updateOverlay();
+}
+
+/** Set FFT grid line color. */
+void CPlotter::setFftGridColor(const QColor& color)
+{
+    m_FftGridColor = color;
+    updateOverlay();
+}
+
+/** Set FFT grid line style. */
+void CPlotter::setFftGridStyle(int style)
+{
+    // Custom dash patterns: {dash, space, dash, space, ...}
+    switch (style) {
+    case 0:  // Fine dots
+        m_FftGridPattern = {1, 3};
+        break;
+    case 1:  // Dots (wider spacing)
+        m_FftGridPattern = {1, 6};
+        break;
+    case 2:  // Sparse dots
+        m_FftGridPattern = {1, 12};
+        break;
+    case 3:  // Short dash
+        m_FftGridPattern = {4, 6};
+        break;
+    case 4:  // Long dash
+        m_FftGridPattern = {8, 8};
+        break;
+    case 5:  // Sparse dash
+        m_FftGridPattern = {6, 16};
+        break;
+    case 6:  // Solid
+        m_FftGridPattern.clear();
+        break;
+    default:
+        m_FftGridPattern = {1, 4};
+        break;
+    }
+    updateOverlay();
+}
+
+/** Set bookmark label font size. */
+void CPlotter::setBookmarkFontSize(int size)
+{
+    m_BookmarkFontSize = qBound(6, size, 48);
+    updateOverlay();
+}
+
+/** Set max hold line color. */
+void CPlotter::setMaxHoldColor(const QColor& color)
+{
+    m_MaxHoldColor = color;
+    draw(false);
+}
+
+/** Set min hold line color. */
+void CPlotter::setMinHoldColor(const QColor& color)
+{
+    m_MinHoldColor = color;
+    draw(false);
+}
+
+/** Set peak marker color. */
+void CPlotter::setPeakColor(const QColor& color)
+{
+    m_PeakColor = color;
+    m_PeakPixmap = QPixmap(); // Force recreation with new color
+    draw(false);
 }
 
 /** Enable/disable filling the area below the FFT plot. */
