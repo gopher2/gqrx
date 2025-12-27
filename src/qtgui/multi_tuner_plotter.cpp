@@ -465,7 +465,10 @@ void MultiTunerPlotter::mousePressEvent(QMouseEvent *event)
         int edge_tuner_id;
         FilterEdge edge = getFilterEdgeAtPosition(event->pos(), edge_tuner_id);
         if (edge != NoEdge) {
-
+            // Don't allow filter resize if tuner is locked
+            if (isTunerLocked(edge_tuner_id)) {
+                return;
+            }
             m_DraggedFilterTuner = edge_tuner_id;
             m_DraggedFilterEdge = edge;
             m_LastMousePos = event->pos();
@@ -476,8 +479,14 @@ void MultiTunerPlotter::mousePressEvent(QMouseEvent *event)
         // Then check for tuner center click
         int tuner_id = getTunerAtPosition(event->pos());
         if (tuner_id >= 0) {
-            // Start tuner dragging
+            // Don't allow dragging if tuner is locked
+            if (isTunerLocked(tuner_id)) {
+                // Still emit click event for selection purposes
+                emit tunerMarkerClicked(tuner_id, screenXToFrequency(event->pos().x()));
+                return;
+            }
 
+            // Start tuner dragging
             m_DraggedTuner = tuner_id;
             m_IsDraggingTuner = true;
             m_DraggedViaHandle = isOnTunerHandle(event->pos(), tuner_id);
@@ -720,6 +729,10 @@ void MultiTunerPlotter::wheelEvent(QWheelEvent *event)
     if (m_MultiTunerEnabled) {
         int tuner_id = getTunerAtPosition(event->position().toPoint());
         if (tuner_id >= 0) {
+            // Don't allow wheel tuning if tuner is locked
+            if (isTunerLocked(tuner_id)) {
+                return;
+            }
             // Fine-tune the tuner frequency with mouse wheel
             auto it = m_TunerMarkers.find(tuner_id);
             if (it != m_TunerMarkers.end()) {

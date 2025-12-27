@@ -46,6 +46,11 @@ public:
         return m_freq;
     }
 
+    bool isLocked() const
+    {
+        return m_locked;
+    }
+
     void setResetLowerDigits(bool reset)
     {
         m_ResetLowerDigits = reset;
@@ -58,10 +63,12 @@ public:
 
 signals:
     void    newFrequency(qint64 freq); // emitted when frequency has changed
+    void    lockStateChanged(bool locked); // emitted when lock state changes
 
 public slots:
     void    setFrequency(qint64 freq);
     void    setFrequencyFocus();
+    void    setLocked(bool locked);
 
 protected:
     void    paintEvent(QPaintEvent *);
@@ -91,6 +98,7 @@ private:
     bool        m_ResetLowerDigits; /* If TRUE digits below the active one will be reset to 0
                                      *  when the active digit is incremented or decremented. */
     bool        m_InvertScrolling;
+    bool        m_locked;           /* If TRUE frequency cannot be changed by user input. */
 
     int         m_FirstEditableDigit;
     int         m_LastLeadZeroPos;

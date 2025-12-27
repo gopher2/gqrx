@@ -235,6 +235,10 @@ public:
     void updateRecordingInfo(double audio_duration, double iq_duration);
     void setRecordingConfig(bool record_iq, bool record_audio, RecordingMode iq_mode, RecordingMode audio_mode);
 
+    // Frequency lock
+    void setFrequencyLocked(bool locked);
+    bool isFrequencyLocked() const { return m_frequency_locked; }
+
     // RSSI level indicator
     void setRssi(float level_db);
     float rssi() const { return m_rssi; }
@@ -277,6 +281,8 @@ signals:
     void recordingToggled(int tuner_id, bool recording);
     void recordingIqToggled(int tuner_id, bool recording);
     void tunerRecordingConfigChanged(int tuner_id, bool record_iq, bool record_audio, RecordingMode iq_mode, RecordingMode audio_mode);
+    // Frequency lock signal
+    void frequencyLockChanged(int tuner_id, bool locked);
 
 private slots:
     void onNameEditFinished();
@@ -308,6 +314,8 @@ private slots:
     void onAgcGainChanged(int value);
     // Recording slots
     void onRecordClicked();
+    // Frequency lock slot
+    void onLockClicked();
 
 protected:
     void resizeEvent(QResizeEvent* event) override;
@@ -338,6 +346,7 @@ private:
     float m_rssi;          // Current RSSI level in dB
     bool m_recording;      // Audio recording state
     bool m_recording_iq;   // IQ recording state
+    bool m_frequency_locked;  // Frequency lock state
     // Recording config (persisted)
     bool m_config_record_iq;    // Enable IQ recording for this tuner
     bool m_config_record_audio; // Enable audio recording for this tuner
@@ -352,6 +361,7 @@ private:
     QPushButton* m_bandwidth_btn;
     QMenu* m_bandwidth_menu;
     CFreqCtrl* m_freq_ctrl;
+    QPushButton* m_lock_btn;
     QLabel* m_status_label;
 
     // Row 2 widgets (controls)
@@ -515,6 +525,7 @@ public slots:
     void update_tuner_recording_info(int tuner_id, double audio_duration, double iq_duration);  // Update recording duration
     void set_all_tuners_running(bool dsp_running);  // Updates all statuses based on DSP state
     void load_from_settings(QSettings* settings);
+    bool is_tuner_frequency_locked(int tuner_id) const;  // Check if tuner frequency is locked
 
 protected:
     void resizeEvent(QResizeEvent* event) override;

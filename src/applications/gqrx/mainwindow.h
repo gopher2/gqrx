@@ -162,6 +162,9 @@ private:
     // dummy widget to enforce linking to QtSvg
     QSvgWidget      *qsvg_dummy;
 
+    // Main frequency lock button
+    QPushButton     *m_main_freq_lock_btn;
+
     QFont font;
 
 private:
@@ -179,6 +182,7 @@ private:
     void rxOffsetZeroShortcut();
     void toggleFreezeShortcut();
     void toggleMarkers();
+    void onMainFreqLockClicked();
 
 private slots:
     void onTunerRemoved(int tuner_id);
