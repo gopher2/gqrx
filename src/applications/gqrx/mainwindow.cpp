@@ -919,6 +919,10 @@ void MainWindow::updateGainStages(bool read_from_device)
  */
 void MainWindow::setNewFrequency(qint64 rx_freq)
 {
+    // Block frequency changes during IQ playback
+    if (!ui->freqCtrl->isEnabled())
+        return;
+
     auto hw_freq = (double)(rx_freq - d_lnb_lo) - rx->get_filter_offset();
     auto center_freq = rx_freq - (qint64)rx->get_filter_offset();
 
