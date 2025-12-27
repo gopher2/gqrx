@@ -2883,6 +2883,7 @@ void MainWindow::startIqPlayback(const QString& filename, float samprate, qint64
 
     // Disable frequency control during playback (frequency is fixed to recorded file)
     ui->freqCtrl->setEnabled(false);
+    ui->plotter->setIqPlaybackActive(true);
 
     std::cout << "DEBUG: Starting DSP..." << std::endl;
     on_actionDSP_triggered(true);
@@ -2987,6 +2988,7 @@ void MainWindow::stopIqPlayback()
 
     // Re-enable frequency control now that we're back to live input
     ui->freqCtrl->setEnabled(true);
+    ui->plotter->setIqPlaybackActive(false);
 }
 
 
