@@ -245,6 +245,7 @@ protected:
     int         getFftHeight() const { return qRound((qreal)m_Percent2DScreen / 100.0 * (qreal)height()); }
     int         getBookmarkTagsBottomAtX(int xLeft, int xRight) const;
     void        zoomStepX(float factor, int x);
+    bool        isClickOnPinnedLabel(QPoint pt) const;
 
 private:
     enum eCapturetype {

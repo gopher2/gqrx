@@ -645,6 +645,20 @@ int CPlotter::getNearestPeak(QPoint pt)
     return best;
 }
 
+/** Check if a point is on a pinned peak label */
+bool CPlotter::isClickOnPinnedLabel(QPoint pt) const
+{
+    int px = qRound((qreal)pt.x() * m_DPR);
+    int py = qRound((qreal)pt.y() * m_DPR);
+
+    for (auto it = m_PinnedPeaks.constBegin(); it != m_PinnedPeaks.constEnd(); ++it) {
+        if (it.value().labelRect.contains(QPointF(px, py))) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /** Set waterfall span in milliseconds */
 void CPlotter::setWaterfallSpan(quint64 span_ms)
 {

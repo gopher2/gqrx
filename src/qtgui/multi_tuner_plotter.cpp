@@ -637,6 +637,12 @@ void MultiTunerPlotter::mouseDoubleClickEvent(QMouseEvent *event)
             return;
         }
 
+        // Check if clicking on a pinned label - let parent handle removal
+        if (isClickOnPinnedLabel(event->pos())) {
+            CPlotter::mouseDoubleClickEvent(event);
+            return;
+        }
+
         // Double-click sets new SDR center frequency
         qint64 freq = screenXToFrequency(event->pos().x());
         emit newCenterFreqRequest(freq);
