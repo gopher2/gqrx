@@ -576,6 +576,7 @@ TunerRowWidget::TunerRowWidget(int tuner_id, const QString& name, ReceiverType t
     , m_rssi(-100.0f)     // Default low RSSI
     , m_recording(false)
     , m_recording_iq(false)
+    , m_frequency_locked(false)
     , m_config_record_iq(false)
     , m_config_record_audio(true)
     , m_config_iq_mode(RecordingMode::CONSTANT)
@@ -710,6 +711,18 @@ TunerRowWidget::TunerRowWidget(int tuner_id, const QString& name, ReceiverType t
     m_freq_ctrl->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     connect(m_freq_ctrl, &CFreqCtrl::newFrequency, this, &TunerRowWidget::onFrequencyChanged);
     row1b_layout->addWidget(m_freq_ctrl);
+
+    // Frequency lock button
+    m_lock_btn = new QPushButton(this);
+    m_lock_btn->setFixedSize(20, 20);
+    m_lock_btn->setCheckable(true);
+    m_lock_btn->setChecked(false);
+    m_lock_btn->setText("\xF0\x9F\x94\x93");  // Unlocked padlock emoji
+    m_lock_btn->setToolTip("Lock frequency (prevent changes)");
+    m_lock_btn->setStyleSheet("QPushButton { border: none; background: transparent; font-size: 12px; }"
+                              "QPushButton:checked { background: rgba(255,200,0,50); }");
+    connect(m_lock_btn, &QPushButton::clicked, this, &TunerRowWidget::onLockClicked);
+    row1b_layout->addWidget(m_lock_btn);
 
     // Start with combined (single row) layout for Row 1
     m_row1_layout = new QHBoxLayout(m_row1_container);
@@ -1383,6 +1396,24 @@ void TunerRowWidget::setRecordingIq(bool recording)
     } else {
         m_recording_indicator->hide();
     }
+}
+
+void TunerRowWidget::onLockClicked()
+{
+    m_frequency_locked = m_lock_btn->isChecked();
+    // Update lock icon: locked vs unlocked padlock
+    m_lock_btn->setText(m_frequency_locked ? "\xF0\x9F\x94\x92" : "\xF0\x9F\x94\x93");
+    // Apply lock state to frequency control
+    m_freq_ctrl->setLocked(m_frequency_locked);
+    emit frequencyLockChanged(m_tuner_id, m_frequency_locked);
+}
+
+void TunerRowWidget::setFrequencyLocked(bool locked)
+{
+    m_frequency_locked = locked;
+    m_lock_btn->setChecked(locked);
+    m_lock_btn->setText(locked ? "\xF0\x9F\x94\x92" : "\xF0\x9F\x94\x93");
+    m_freq_ctrl->setLocked(locked);
 }
 
 void TunerRowWidget::updateRecordingInfo(double audio_duration, double iq_duration)
@@ -2860,6 +2891,15 @@ void TunerList::update_tuner_recording_info(int tuner_id, double audio_duration,
     if (it != tuner_rows.end()) {
         it->second->updateRecordingInfo(audio_duration, iq_duration);
     }
+}
+
+bool TunerList::is_tuner_frequency_locked(int tuner_id) const
+{
+    auto it = tuner_rows.find(tuner_id);
+    if (it != tuner_rows.end()) {
+        return it->second->isFrequencyLocked();
+    }
+    return false;  // Default to unlocked if tuner not found
 }
 
 void TunerList::onTunerFrequencyChanged(int tuner_id, qint64 freq)

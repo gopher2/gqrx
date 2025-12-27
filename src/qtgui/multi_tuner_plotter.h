@@ -31,6 +31,7 @@
 #include <QAction>
 #include <QContextMenuEvent>
 #include <map>
+#include <functional>
 
 /**
  * @brief Enhanced plotter with multi-tuner marker support
@@ -103,6 +104,17 @@ public:
 
     /** Get list of all tuner IDs */
     std::vector<int> getTunerIds() const;
+
+    /** Callback type for checking if a tuner is frequency-locked */
+    using TunerLockCallback = std::function<bool(int tuner_id)>;
+
+    /** Set callback to check if a tuner's frequency is locked */
+    void setTunerLockCallback(TunerLockCallback callback) { m_TunerLockCallback = callback; }
+
+    /** Check if a tuner is locked (via callback) */
+    bool isTunerLocked(int tuner_id) const {
+        return m_TunerLockCallback && m_TunerLockCallback(tuner_id);
+    }
 
 public slots:
     /** Update tuner frequency */
@@ -208,6 +220,9 @@ private:
     // Marker display settings
     static const int MARKER_HEIGHT = 20;
     static const int LABEL_OFFSET_Y = -25;
+
+    // Tuner lock callback
+    TunerLockCallback m_TunerLockCallback;
 };
 
 #endif // MULTI_TUNER_PLOTTER_H

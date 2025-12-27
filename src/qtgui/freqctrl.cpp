@@ -69,6 +69,7 @@ CFreqCtrl::CFreqCtrl(QWidget *parent) :
     m_ActiveEditDigit = -1;
     m_ResetLowerDigits = true;
     m_InvertScrolling = false;
+    m_locked = false;
     m_UnitsFont = QFont("Arial", 12, QFont::Normal);
     m_DigitFont = QFont("Arial", 12, QFont::Normal);
     m_CumWheelDelta = 0;
@@ -254,6 +255,16 @@ void CFreqCtrl::setFrequency(qint64 freq)
     m_LastLeadZeroPos = m_LeadZeroPos;
 }
 
+void CFreqCtrl::setLocked(bool locked)
+{
+    if (m_locked != locked)
+    {
+        m_locked = locked;
+        emit lockStateChanged(m_locked);
+        update();
+    }
+}
+
 void CFreqCtrl::setDigitColor(QColor col)
 {
     m_DigitColor = col;
@@ -369,6 +380,9 @@ void CFreqCtrl::mouseMoveEvent(QMouseEvent *event)
 
 void CFreqCtrl::mousePressEvent(QMouseEvent *event)
 {
+    if (m_locked)
+        return;
+
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     QPointF pt = event->localPos();
 #else
@@ -415,6 +429,9 @@ void CFreqCtrl::mousePressEvent(QMouseEvent *event)
 
 void CFreqCtrl::wheelEvent(QWheelEvent *event)
 {
+    if (m_locked)
+        return;
+
 #if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
     QPointF   pt = QPointF(event->pos());
 #else
@@ -445,6 +462,9 @@ void CFreqCtrl::wheelEvent(QWheelEvent *event)
 
 void CFreqCtrl::keyPressEvent(QKeyEvent *event)
 {
+    if (m_locked)
+        return;
+
     // call base class if dont over ride key
     bool      fSkipMsg = false;
     qint64    tmp;

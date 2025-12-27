@@ -148,6 +148,22 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     ui->freqCtrl->setUnitsColor(QColor(0xFF, 0xCC, 0x99));      // Light orange for "Hz"
     ui->freqCtrl->setHighlightColor(QColor(0x5A, 0x5A, 0x5A));  // Slightly lighter for hover
 
+    // Main frequency lock button - add next to freqCtrl
+    m_main_freq_lock_btn = new QPushButton(this);
+    m_main_freq_lock_btn->setFixedSize(24, 24);
+    m_main_freq_lock_btn->setCheckable(true);
+    m_main_freq_lock_btn->setChecked(false);
+    m_main_freq_lock_btn->setText("\xF0\x9F\x94\x93");  // Unlocked padlock emoji
+    m_main_freq_lock_btn->setToolTip("Lock SDR center frequency (prevent changes)");
+    m_main_freq_lock_btn->setStyleSheet("QPushButton { border: none; background: transparent; font-size: 14px; }"
+                                        "QPushButton:checked { background: rgba(255,200,0,80); border-radius: 3px; }");
+    // Insert lock button into the layout next to freqCtrl (in horizontalLayout_4)
+    int idx = ui->horizontalLayout_4->indexOf(ui->freqCtrl);
+    if (idx >= 0) {
+        ui->horizontalLayout_4->insertWidget(idx + 1, m_main_freq_lock_btn);
+    }
+    connect(m_main_freq_lock_btn, &QPushButton::clicked, this, &MainWindow::onMainFreqLockClicked);
+
     d_filter_shape = receiver::FILTER_SHAPE_NORMAL;
 
     /* create receiver object */
@@ -208,6 +224,15 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
         });
 
     }
+
+    // Set up tuner lock callback for the plotter
+    TunerList* list_widget_ptr = tuner_list_widget;
+    ui->plotter->setTunerLockCallback([list_widget_ptr](int tuner_id) -> bool {
+        if (list_widget_ptr) {
+            return list_widget_ptr->is_tuner_frequency_locked(tuner_id);
+        }
+        return false;
+    });
 
     // remote controller
     remote = new RemoteControl();
@@ -1510,6 +1535,11 @@ void MainWindow::setNewFrequency(qint64 rx_freq)
     // Block frequency changes during IQ playback
     if (!ui->freqCtrl->isEnabled())
         return;
+
+    // Check if main frequency is locked
+    if (ui->freqCtrl->isLocked()) {
+        return;
+    }
 
     // Get current RF frequency to calculate the shift
     qint64 old_rf_freq = tuner_manager->get_rf_freq();
@@ -3695,6 +3725,10 @@ void MainWindow::onTunerDragged(int tuner_id, qint64 freq)
     if (!tuner_manager)
         return;
 
+    // Check if this tuner's frequency is locked
+    if (tuner_list_widget && tuner_list_widget->is_tuner_frequency_locked(tuner_id))
+        return;
+
     auto* tuner = tuner_manager->get_channel_impl(tuner_id);
     if (!tuner)
         return;
@@ -3969,6 +4003,11 @@ void MainWindow::setRdsDecoder(bool checked)
 
 void MainWindow::onBookmarkActivated(qint64 freq, const QString& demod, int bandwidth)
 {
+    // Don't allow bookmark activation if main frequency is locked
+    if (ui->freqCtrl->isLocked()) {
+        return;
+    }
+
     setNewFrequency(freq);
     selectDemod(demod);
 
@@ -4253,6 +4292,15 @@ void MainWindow::toggleMarkers()
 {
     enableMarkers(!d_show_markers);
     uiDockFft->setMarkersEnabled(d_show_markers);
+}
+
+void MainWindow::onMainFreqLockClicked()
+{
+    bool locked = m_main_freq_lock_btn->isChecked();
+    // Update lock icon: locked vs unlocked padlock
+    m_main_freq_lock_btn->setText(locked ? "\xF0\x9F\x94\x92" : "\xF0\x9F\x94\x93");
+    // Apply lock state to main frequency control
+    ui->freqCtrl->setLocked(locked);
 }
 
 void MainWindow::onTunerRemoved(int tuner_id)
