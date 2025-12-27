@@ -1,273 +1,185 @@
-Gqrx
-====
+Gqrx Enhanced
+=============
 
-[![CI](https://github.com/gqrx-sdr/gqrx/workflows/CI/badge.svg)](https://github.com/gqrx-sdr/gqrx/actions?query=workflow%3ACI+branch%3Amaster)
-[![Build](https://github.com/gqrx-sdr/gqrx/workflows/Build/badge.svg)](https://github.com/gqrx-sdr/gqrx/actions?query=workflow%3ABuild+branch%3Amaster)
+This is an enhanced fork of [Gqrx](https://gqrx.dk/), an open source software defined radio (SDR) receiver. It adds multi-receiver support, improved IQ recording, RadioReference.com integration, and many UI enhancements.
 
-Gqrx is an open source software defined radio (SDR) receiver implemented using
-[GNU Radio](https://gnuradio.org) and the [Qt GUI toolkit](https://www.qt.io/).
-Currently it works on Linux and Mac with hardware supported by gr-osmosdr,
-including Funcube Dongle, RTL-SDR, Airspy, HackRF, BladeRF, RFSpace, USRP and
-SoapySDR.
-
-Gqrx can operate as an AM/FM/SSB receiver with audio output or as an FFT-only
-instrument. There are also various hooks for interacting with external
-applications using network sockets.
-
-![Screenshot of the main Gqrx window](resources/screenshots/gqrx-main.png)
+![Gqrx Enhanced main interface showing multi-tuner support, bookmarks, and band plan overlay](resources/screenshots/main-overview.png)
+*Full interface with multiple tuners, color-coded bookmarks, pinned peak labels, and band plan overlay*
 
 
-Download
---------
+New Features
+------------
 
-Gqrx is distributed as a source code package and binaries for Linux and Mac.
-Many Linux distributions provide gqrx in their package repositories.
-Alternate Mac support is available through [MacPorts](https://ports.macports.org/port/gqrx/summary) and [Homebrew](https://formulae.brew.sh/cask/gqrx).
-Windows support is available through [radioconda](https://github.com/ryanvolz/radioconda#radioconda).
+This fork combines several feature branches to create an enhanced GQRX experience.
 
-* [Official releases](https://github.com/gqrx-sdr/gqrx/releases)
-* [Pre-release builds](https://github.com/gqrx-sdr/gqrx/actions?query=workflow%3ABuild+branch%3Amaster)
+### Multi-Receiver Support
 
-Usage
------
+Monitor multiple frequencies at once with independent receivers.
 
-It is strongly recommended to run the `volk_profile` utility before
-running gqrx. This will detect and enable processor-specific optimisations and
-will in many cases give a significant performance boost.
+- **Multiple Tuners**: Add multiple receiver channels, each with its own frequency, mode, and filter settings
+- **Tuner List Panel**: Manage all your tuners in a dedicated dock widget
+- **Visual Markers**: Each tuner shows on the FFT with color-coded frequency markers
+- **Drag to Tune**: Click and drag tuner markers to change frequency
+- **Filter Resizing**: Drag filter edges to adjust bandwidth
+- **Wheel Fine-Tuning**: Mouse wheel over a tuner marker for precise adjustment
+- **Double-Click Recenter**: Double-click anywhere on the FFT to recenter the SDR
+- **Per-Tuner Recording**: Record IQ and audio independently for each tuner with flexible capture modes
 
-The first time you start gqrx it will open a device configuration dialog.
-Supported devices that are connected to the computer are discovered
-automatically and you can select any of them in the drop-down list.
+**Per-Channel Recording Modes:**
+| Mode | Description |
+|------|-------------|
+| Constant | Record continuously to a single file |
+| Per Call (Squelch) | Create a new file each time squelch opens - perfect for logging individual transmissions |
+| Condensed (Squelch Chunks) | Time-based file segments that only contain audio when squelch is open - removes dead air automatically |
 
-If you don't see your device listed in the drop-down list it could be because:
-- The driver has not been included in a binary distribution
-- The udev rule has not been properly configured
-- Linux kernel driver is blocking access to the device
+<img src="resources/screenshots/tuner-manager.png" width="500" alt="Tuner Manager panel">
 
-You can test your device using device specific tools, such as rtl_test,
-airspy_rx, hackrf_transfer, qthid, etc.
+*Tuner Manager showing four tuners with independent frequency, mode, and recording controls*
 
-Gqrx supports multiple configurations and sessions if you have several devices
-or if you want to use the same device under different configurations. You can
-load a configuration from the GUI or using the `-c` command line argument. See
-`gqrx --help` for a complete list of command line arguments.
+**Toolbar buttons:**
+| Button | Function |
+|--------|----------|
+| + | Add new tuner at current frequency |
+| ▼ | Select demodulation mode for new tuners (WFM, NFM, AM, USB, LSB, CW) |
+| ⚙ | Open tuner manager settings |
+| ● | Record all tuners simultaneously |
+| 📁 | Open recordings folder |
+| 3/4 | Current tuner / total count |
 
-Tutorials and howtos are being written and published on the website
-https://gqrx.dk/
+**Per-tuner controls:**
+| Button | Function |
+|--------|----------|
+| SQ | Toggle squelch |
+| N | Noise blanker 1 |
+| AGC | Automatic gain control |
+| NB | Noise blanker 2 |
+| V | Volume slider |
+| M | Mute audio output |
+| ● | Record this tuner (shows elapsed time) |
+| O | Toggle audio output |
+| E | Edit tuner name |
+| B | Bookmark this tuner frequency |
+| C | Center FFT on this tuner |
+| Z | Cycle through zoom levels |
+| X | Delete tuner |
 
+<img src="resources/screenshots/tuner-settings.png" width="300" alt="Tuner settings dialog">
 
-Known problems
---------------
+*Per-tuner settings for filter shape, noise blanker, AGC, and recording options*
 
-See the bug tracker on Github: https://github.com/gqrx-sdr/gqrx/issues
+### Enhanced IQ Recorder
 
+A completely redesigned IQ recording and playback system.
 
-Getting help and reporting bugs
--------------------------------
+- **Table View**: Sortable columns showing filename, date, frequency, sample rate, duration, size, and comments
+- **SigMF Format**: Uses SigMF metadata by default for proper recording documentation
+- **File Comments**: Add notes to your recordings via SigMF or JSON sidecar files
+- **Right-Click Menu**: Show in Finder, edit comments, delete files
+- **Column Visibility**: Choose which columns to display via header right-click
+- **Disk Space Indicator**: See available recording space at a glance
+- **Filename Templates**: Customizable filename patterns with date, frequency, and channel variables
 
-There is a Google group for discussing anything related to Gqrx:
-https://groups.google.com/g/gqrx
-This includes getting help with installation and troubleshooting. Please
-remember to provide detailed description of your problem, your setup, what
-steps you followed, etc.
+![IQ Recorder panel](resources/screenshots/iq-recorder.png)
+*IQ Recorder with sortable table view, file comments, and SigMF format support*
 
-Please stick around and help others with their problems. Otherwise, if only
-developers provide user support there will be no more time for further
-development.
+<img src="resources/screenshots/filename-templates.png" width="400" alt="Filename template settings">
 
+*Customizable filename patterns with live preview*
 
-Installation from source
-------------------------
+### RadioReference.com Integration
 
-The source code is hosted on Github: https://github.com/gqrx-sdr/gqrx
+Import conventional frequencies directly from RadioReference.com's database.
 
-To compile gqrx from source you need the following dependencies:
-- GNU Radio 3.8, 3.9, or 3.10 with the following components:
-    - gnuradio-runtime
-    - gnuradio-analog
-    - gnuradio-audio
-    - gnuradio-blocks
-    - gnuradio-digital
-    - gnuradio-fft
-    - gnuradio-filter
-    - gnuradio-network (GNU Radio 3.10 only)
-    - gnuradio-pmt
-- The gr-iqbalance library (optional)
-- Drivers for the hardware you want to have support for:
-    - UHD driver via gr-uhd
-    - FUNcube Dongle and FUNcube Dongle Pro+ driver from https://github.com/dl1ksv/gr-funcube
-    - RTL-SDR driver from https://gitea.osmocom.org/sdr/rtl-sdr
-    - HackRF driver from https://github.com/mossmann/hackrf
-    - Airspy driver from https://github.com/airspy/airspyone_host
-    - SoapySDR from https://github.com/pothosware/SoapySDR
-    - RFSpace driver is built in
-- gnuradio-osmosdr from https://gitea.osmocom.org/sdr/gr-osmosdr
-- pulseaudio or portaudio (Linux-only and optional)
-- Qt 5 or Qt 6 with the following components:
-    - Core
-    - GUI
-    - Network
-    - Widgets
-    - Svg (runtime-only)
-- cmake version >= 3.5.0
+- **Location-Based Search**: Select state, county, or metro area to find local frequencies
+- **Category Filtering**: Filter results by Police, Fire, EMS, Business, etc.
+- **Bulk Import**: Select multiple frequencies to import as bookmarks
 
-Gqrx can be compiled from within Qt Creator or in a terminal:
+![RadioReference import dialog](resources/screenshots/radioreference-import.png)
+*Import frequencies from RadioReference.com by location and category*
 
-For command line builds:
-<pre>
-$ git clone https://github.com/gqrx-sdr/gqrx.git gqrx.git
-$ cd gqrx.git
-$ mkdir build
-$ cd build
-$ cmake ..
-$ make
-</pre>
-On some systems, the default cmake release builds are "over-optimized" and
-perform poorly. In that case try forcing -O2 using
-<pre>
-export CXXFLAGS=-O2
-</pre>
-before the cmake step.
+### FFT Display Enhancements
 
-For Qt Creator builds:
-<pre>
-$ git clone https://github.com/gqrx-sdr/gqrx.git gqrx.git
-$ cd gqrx.git
-$ mkdir build
-Start Qt Creator
-Open gqrx.git/CMakeLists.txt file
-At the dialog asking for build location, select gqrx.git/build
-click continue
-If asked to choose cmake executable, do so
-click continue
-click the run cmake button
-click done
-optionally, on the Projects page, under Build Steps/Make/Additional arguments,
-	enter -j4 (replacing 4 with the number of cores in your CPU).
-Use Qt Creator as before
-</pre>
+Customizable FFT display with new annotation features.
+
+- **Color Customization**: Change colors for background, grid, max hold, min hold, and peak indicators
+- **Grid Styles**: Choose between dotted, dashed, or solid grid lines
+- **Bookmark Font Size**: Adjust the size of bookmark labels
+- **Pinned Peak Labels**: Double-click on peaks to add persistent labels showing frequency and dB
+- **Draggable Labels**: Move pinned labels anywhere on the display
+- **Smart Arrows**: Leader lines with arrowheads track peak positions
+- **Bookmark Snapping**: Peak labels snap to nearby bookmark frequencies for accuracy
+- **Floating Bookmark Lines**: Bookmark lines float above the FFT signal instead of running to the bottom
+
+<img src="resources/screenshots/fft-settings.png" width="300" alt="FFT Settings panel">
+
+*FFT customization options for colors, grid style, and peak detection*
+
+![Pinned peak labels](resources/screenshots/pinned-peaks.png)
+*Pinned peak labels with bookmark snapping and leader line arrows*
+
+### Band Plan Manager
+
+Interactive band plan display and management.
+
+- **Visual Band Overlay**: See band allocations directly on the FFT display
+- **Band Plan Dock**: Browse and manage band plans in a dedicated panel
+- **Click to Tune**: Click on a band to tune to that frequency range
+- **Customizable Plans**: Edit band plans via CSV configuration
+
+![Band Plan Manager](resources/screenshots/bandplan-manager.png)
+*Band Plan Manager dock for browsing and editing frequency allocations*
+
+![Band plan overlay on FFT](resources/screenshots/bandplan-overlay.png)
+*Band allocations displayed as colored overlays on the FFT display*
 
 
-Debugging
----------
+Building from Source
+--------------------
 
-Debug logging can be enabled by setting the `QT_LOGGING_RULES` environment
-variable:
-
-```
-QT_LOGGING_RULES="*.debug=true;plotter.debug=false;qt.*.debug=false" gqrx
+```bash
+mkdir -p build && cd build
+cmake ..
+make -j$(nproc)
 ```
 
-To turn on plotter debugging as well, use the following command:
+### Dependencies
 
-```
-QT_LOGGING_RULES="*.debug=true;qt.*.debug=false" gqrx
-```
+Same as upstream Gqrx:
+- GNU Radio 3.8, 3.9, or 3.10
+- Qt 5 or Qt 6
+- gr-osmosdr (optional, for hardware support)
+- cmake >= 3.5.0
 
 
-Credits and License
--------------------
+Branch Structure
+----------------
 
-Gqrx is designed and written by Alexandru Csete OZ9AEC, and it is licensed
-under the GNU General Public License.
+| Branch | Description |
+|--------|-------------|
+| `master` | Synced with upstream gqrx |
+| `feature/combined` | All features merged together |
+| `feature/IqTool-Enhanced` | Enhanced IQ recorder |
+| `feature/BookmarkManager-Enhanced` | RadioReference integration |
+| `feature/FFT-Enhanced` | FFT colors and pinned peaks |
+| `feature/BandplanManager-Enhanced` | Band plan dock widget |
+| `feature/MultiRx` | Multi-receiver support |
 
-Some of the source files were adapted from Cutesdr by Moe Weatley and these
-come with a Simplified BSD license.
 
-The following people and organisations have contributed to gqrx:
+Contributing
+------------
 
-* Alex Grinkov
-* Alexander Fasching
-* Andrea Merello
-* Andrea Montefusco, IW0HDV
-* Andy Sloane
-* Anthony Willard
-* Anton Blanchard
-* AsciiWolf
-* Bastian Bloessl
-* Ben Reese
-* Bob McGwier, N4HY
-* Brandonn Etheve
-* charlylima
-* Chris Kuethe
-* Christian Lindner, DL2VCL
-* Clayton Smith, VE3IRR
-* Dallas Epperson
-* Daniil Cherednik
-* Darin Franklin
-* Davide Gerhard
-* Dominic Chen
-* Doron Behar
-* Doug Hammond
-* Edouard Lafargue
-* Elias Önal
-* Federico Fuga
-* Frank Brickle, AB2KT
-* Frank Werner-Krippendorf, HB9FXQ
-* Ganael Laplanche
-* Gisle Vanem
-* Göran Weinholt, SA6CJK
-* Grigory Shipunov
-* Gwenhael Goavec-Merou
-* Herman Semenov
-* James Yuzawa
-* Jaroslav Škarvada
-* Jeff Long
-* Jiawei Chen
-* Jiří Pinkava
-* Joachim Schueth, DL2KCD
-* Jon Bergli Heier
-* Josh Blum
-* Kate Adams
-* Kenji Rikitake, JJ1BDX
-* Kitware Inc.
-* Konrad Beckmann
-* Luna Gräfje
-* luzpaz
-* Marco Savelli
-* Markus Kolb
-* Michael Dickens
-* Michael Lass
-* Michael Tatarinov
-* Moe Weatley
-* Nadeem Hasan
-* Nate Temple
-* Nick Robinson, KE5YWP
-* Nokia
-* Oliver Grossmann, DH2WQ
-* Pavel Milanes, CO7WT
-* Pavel Stano
-* Phil Vachon
-* Radoslav Gerganov
-* Rob Frohne
-* Ron Economos, W6RZ
-* Ruslan Migirov
-* Russell Dwarshuis, KB8U
-* Ryan Volz
-* Shuyuan Liu
-* Stefano Leucci
-* Sultan Qasim Khan
-* Sylvain Munaut
-* Tarmo Tanilsoo
-* Tomasz Lemiech
-* Timothy Reaves
-* Valentin Ochs
-* Vesa Solonen
-* Vincent Pelletier
-* Vladisslav P
-* Will Scales
-* Wolfgang Fritz, DK7OB
-* Youssef Touil
-* Zero_Chaos
+I'm open to contributing these features upstream to the main Gqrx project. However, in their current state, these features would need more thorough code review, testing across different platforms and hardware, and potentially some refactoring to meet upstream standards. For now, this fork serves as a testing ground for new ideas and may be better suited as a standalone project.
 
-Some of the icons are from:
-- The GNOME icon theme CC-SA 3.0 by GNOME icon artists
-- Tango icon theme, Public Domain by The people from the Tango! project
-- Mint-X icon theme, GPL by Clement Lefebvre
+Bug reports and feature requests are welcome via GitHub Issues.
 
-Also thanks to Volker Schroer and Alexey Bazhin for bringing Funcube Dongle
-Pro+ support to GNU Radio and Gqrx.
+You can also reach me on the [trunk-recorder Discord](https://discord.gg/trunk-recorder) as **dave023593** (Dave - K9DPD).
 
-Let me know if somebody is missing from the list.
 
-Alex OZ9AEC
+Credits
+-------
+
+This enhanced version builds upon the excellent work of Alexandru Csete OZ9AEC and all the Gqrx contributors.
+
+Enhancements by David Kierzkowski K9DPD.
+
+Gqrx is licensed under the GNU General Public License.
