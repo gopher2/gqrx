@@ -247,6 +247,9 @@ protected:
     void        zoomStepX(float factor, int x);
     bool        isClickOnPinnedLabel(QPoint pt) const;
 
+    QList< QPair<QRectF, qint64> >     m_Taglist;  // Bookmark tag rectangles and frequencies
+    qreal       m_DPR{1.0};  // Device pixel ratio
+
 private:
     enum eCapturetype {
         NOCAP,
@@ -321,7 +324,6 @@ private:
     int         m_WaterfallOffset;
     QColor      m_ColorTbl[256];
     QSize       m_Size;
-    qreal       m_DPR{};
     QString     m_HDivText[HORZ_DIVS_MAX+1];
     bool        m_Running;
     bool        m_DrawOverlay;
@@ -402,7 +404,6 @@ private:
     QMap<qint64, PinnedPeakInfo> m_PinnedPeaks;  // Pinned peak labels by frequency
     qint64      m_DraggedPeakFreq{};             // Frequency of label being dragged
 
-    QList< QPair<QRectF, qint64> >     m_Taglist;
     QList< QPair<QRectF, int> >        m_BandRectList;  // Band rectangles with indices for click detection
 
     // Waterfall averaging

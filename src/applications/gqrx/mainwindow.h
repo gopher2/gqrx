@@ -226,6 +226,8 @@ private slots:
     void onTunerAgcGainChanged(int tuner_id, int gain);
     void addTuner();
     void addTunerWithType(ReceiverType type);
+    void addTunerAtFrequency(qint64 freq);
+    void addTunerAtFrequencyWithMode(qint64 freq, QString modulation, QString name = QString());
     void removeTuner();
 
 private slots:

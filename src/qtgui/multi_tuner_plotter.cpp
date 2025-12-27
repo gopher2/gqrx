@@ -21,6 +21,7 @@
  * Boston, MA 02110-1301, USA.
  */
 #include "multi_tuner_plotter.h"
+#include "bookmarks.h"
 #include <QPainter>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -426,6 +427,11 @@ void MultiTunerPlotter::mousePressEvent(QMouseEvent *event)
         }
     }
 
+    // Intercept right-click - let contextMenuEvent handle it (always allow adding tuners)
+    if (event->button() == Qt::RightButton) {
+        return;  // Don't pass to parent, contextMenuEvent will show menu
+    }
+
     // If not handled by tuner logic, pass to parent
     CPlotter::mousePressEvent(event);
 }
@@ -695,6 +701,79 @@ void MultiTunerPlotter::leaveEvent(QEvent *event)
 {
     QToolTip::hideText();
     CPlotter::leaveEvent(event);
+}
+
+void MultiTunerPlotter::contextMenuEvent(QContextMenuEvent *event)
+{
+    // Always allow adding tuners via context menu (even when no tuners exist yet)
+    // Get click position in DPR-scaled coordinates (m_Taglist uses DPR-scaled coords)
+    QPointF ppos = event->pos() * m_DPR;
+
+    // Get frequency at click position
+    qint64 freq = screenXToFrequency(event->pos().x());
+
+    // Check if clicking on a bookmark tag label (using m_Taglist from parent)
+    BookmarkInfo clickedBookmark;
+    bool onBookmark = false;
+    qint64 tagFreq = 0;
+
+    // m_Taglist contains pairs of (QRectF tag_rect, qint64 frequency)
+    for (const auto& tag : m_Taglist) {
+        if (tag.first.contains(ppos)) {
+            tagFreq = tag.second;
+            onBookmark = true;
+            break;
+        }
+    }
+
+    // If clicked on a tag, find the corresponding bookmark info
+    bool bookmarkFound = false;
+    if (onBookmark) {
+        Bookmarks& bookmarks = Bookmarks::Get();
+        for (int i = 0; i < bookmarks.size(); ++i) {
+            const BookmarkInfo& bm = bookmarks.getBookmark(i);
+            if (bm.frequency == tagFreq) {
+                clickedBookmark = bm;
+                bookmarkFound = true;
+                break;
+            }
+        }
+    }
+
+    QMenu menu(this);
+    QAction *addTunerAction = nullptr;
+    QAction *addTunerFromBookmarkAction = nullptr;
+
+    if (bookmarkFound) {
+        // Show bookmark-specific option
+        addTunerFromBookmarkAction = menu.addAction(
+            QString("Add Tuner for '%1' (%2)")
+                .arg(clickedBookmark.name)
+                .arg(clickedBookmark.modulation));
+        addTunerFromBookmarkAction->setData(clickedBookmark.frequency);
+    } else {
+        // Format frequency for display
+        QString freqStr;
+        if (freq >= 1000000000)
+            freqStr = QString("%1 GHz").arg((double)freq / 1e9, 0, 'f', 6);
+        else if (freq >= 1000000)
+            freqStr = QString("%1 MHz").arg((double)freq / 1e6, 0, 'f', 3);
+        else if (freq >= 1000)
+            freqStr = QString("%1 kHz").arg((double)freq / 1e3, 0, 'f', 1);
+        else
+            freqStr = QString("%1 Hz").arg(freq);
+
+        addTunerAction = menu.addAction(QString("Add Tuner at %1").arg(freqStr));
+        addTunerAction->setData(freq);
+    }
+
+    QAction *selectedAction = menu.exec(event->globalPos());
+
+    if (selectedAction == addTunerAction && addTunerAction) {
+        emit addTunerRequested(freq);
+    } else if (selectedAction == addTunerFromBookmarkAction && addTunerFromBookmarkAction) {
+        emit addTunerFromBookmarkRequested(clickedBookmark.frequency, clickedBookmark.modulation, clickedBookmark.name);
+    }
 }
 
 void MultiTunerPlotter::drawTunerMarkers(QPainter& painter)

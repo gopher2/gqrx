@@ -76,6 +76,12 @@ DockBookmarks::DockBookmarks(QWidget *parent) :
         actionAddBookmark = new QAction("Add Bookmark", this);
         contextmenu->addAction(actionAddBookmark);
     }
+    // MenuItem Add Tuner
+    {
+        QAction* action = new QAction("Add Tuner", this);
+        contextmenu->addAction(action);
+        connect(action, SIGNAL(triggered()), this, SLOT(AddTunerFromSelectedBookmark()));
+    }
     ui->tableViewFrequencyList->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(ui->tableViewFrequencyList, SIGNAL(customContextMenuRequested(const QPoint&)),
         this, SLOT(ShowContextMenu(const QPoint&)));
@@ -200,6 +206,21 @@ bool DockBookmarks::DeleteSelectedBookmark()
         bookmarksTableModel->update();
     }
     return true;
+}
+
+void DockBookmarks::AddTunerFromSelectedBookmark()
+{
+    QModelIndexList selected = ui->tableViewFrequencyList->selectionModel()->selectedRows();
+
+    if (selected.empty())
+    {
+        return;
+    }
+
+    int iIndex = bookmarksTableModel->GetBookmarksIndexForRow(selected.first().row());
+    BookmarkInfo bookmark = Bookmarks::Get().getBookmark(iIndex);
+
+    emit addTunerRequested(bookmark.frequency, bookmark.modulation, bookmark.name);
 }
 
 void DockBookmarks::ShowContextMenu(const QPoint& pos)
