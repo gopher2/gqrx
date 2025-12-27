@@ -86,6 +86,10 @@ public:
     void setMultiTunerEnabled(bool enabled);
     bool isMultiTunerEnabled() const { return m_MultiTunerEnabled; }
 
+    /** Enable/disable IQ playback mode (prevents frequency changes) */
+    void setIqPlaybackActive(bool active) { m_IqPlaybackActive = active; }
+    bool isIqPlaybackActive() const { return m_IqPlaybackActive; }
+
     /** Set marker display options */
     void setShowTunerNames(bool show) { m_ShowTunerNames = show; }
     void setShowTunerFilters(bool show) { m_ShowTunerFilters = show; }
@@ -171,6 +175,7 @@ private:
     std::map<int, TunerMarker> m_TunerMarkers;
     int m_ActiveTuner;
     bool m_MultiTunerEnabled;
+    bool m_IqPlaybackActive;
     bool m_ShowTunerNames;
     bool m_ShowTunerFilters;
     bool m_ShowTunerFrequencies;

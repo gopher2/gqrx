@@ -50,6 +50,7 @@ MultiTunerPlotter::MultiTunerPlotter(QWidget *parent)
     : CPlotter(parent)
     , m_ActiveTuner(-1)
     , m_MultiTunerEnabled(true)
+    , m_IqPlaybackActive(false)
     , m_ShowTunerNames(false)
     , m_ShowTunerFilters(true)
     , m_ShowTunerFrequencies(false)
@@ -626,6 +627,10 @@ void MultiTunerPlotter::mouseReleaseEvent(QMouseEvent *event)
 void MultiTunerPlotter::mouseDoubleClickEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
+        // Don't allow frequency changes during IQ playback
+        if (m_IqPlaybackActive)
+            return;
+
         // Double-click sets new SDR center frequency
         qint64 freq = screenXToFrequency(event->pos().x());
         emit newCenterFreqRequest(freq);
