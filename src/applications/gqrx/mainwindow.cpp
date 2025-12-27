@@ -426,10 +426,13 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     connect(ui->plotter, SIGNAL(filterResized(int, int, int)), this, SLOT(onFilterResized(int, int, int)));
     connect(ui->plotter, SIGNAL(panSdrFrequency(int,qint64)), this, SLOT(onPanSdrFrequency(int,qint64)));
     connect(ui->plotter, SIGNAL(newCenterFreqRequest(qint64)), this, SLOT(setNewFrequency(qint64)));
+    connect(ui->plotter, SIGNAL(addTunerRequested(qint64)), this, SLOT(addTunerAtFrequency(qint64)));
+    connect(ui->plotter, SIGNAL(addTunerFromBookmarkRequested(qint64, QString, QString)), this, SLOT(addTunerAtFrequencyWithMode(qint64, QString, QString)));
 
     // Bookmarks
     connect(uiDockBookmarks, SIGNAL(newBookmarkActivated(qint64, QString, int)), this, SLOT(onBookmarkActivated(qint64, QString, int)));
     connect(uiDockBookmarks->actionAddBookmark, SIGNAL(triggered()), this, SLOT(on_actionAddBookmark_triggered()));
+    connect(uiDockBookmarks, SIGNAL(addTunerRequested(qint64, QString, QString)), this, SLOT(addTunerAtFrequencyWithMode(qint64, QString, QString)));
     connect(&Bookmarks::Get(), SIGNAL(BookmarksChanged()), ui->plotter, SLOT(updateOverlay()));
 
     //DXC Spots
@@ -4039,6 +4042,265 @@ void MainWindow::addTunerWithType(ReceiverType type)
         // Settings are now handled by TunerRowWidget - no per-tuner dock needed
 
         // Refresh the tuner list UI and sync filter width
+        if (tuner_list_widget) {
+            tuner_list_widget->refresh_tuner_list();
+            tuner_list_widget->update_tuner_filter_width(new_tuner_id, filter_low, filter_high);
+        }
+    } else {
+        QMessageBox::warning(this, tr("Error"), tr("Failed to add tuner"));
+    }
+}
+
+void MainWindow::addTunerAtFrequency(qint64 freq)
+{
+    if (!tuner_manager) {
+        QMessageBox::warning(this, tr("Error"), tr("No tuner manager available"));
+        return;
+    }
+
+    // Verify SDR is connected
+    double input_rate = tuner_manager->get_input_rate();
+    if (input_rate <= 0) {
+        QMessageBox::warning(this, tr("Error"),
+            tr("SDR not connected or invalid sample rate.\nInput rate: %1").arg(input_rate));
+        return;
+    }
+
+    // Default to NFM mode
+    ReceiverType type = ReceiverType::ANALOG_NFM;
+
+    // Use new IChannelManager API
+    channel_id new_tuner_id = tuner_manager->create_channel(ChannelType::MANUAL, type);
+    if (new_tuner_id >= 0) {
+        tuner_manager->set_active_channel(new_tuner_id);
+
+        // Set tuner's DDC offset to the requested frequency
+        auto* tuner = tuner_manager->get_channel_impl(new_tuner_id);
+        if (tuner) {
+            qint64 rf_freq = tuner_manager->get_rf_freq();
+
+            // DDC offset = requested freq - (rf + lnb)
+            double ddc_offset = (double)(freq - rf_freq - d_lnb_lo);
+            tuner->set_center_freq(ddc_offset);
+
+            // Set initial audio gain (main gain * default channel volume at -15dB)
+            float default_vol = 0.18f;  // -15dB = 10^(-15/20) ≈ 0.178
+            tuner->set_audio_gain(d_main_gain_linear * default_vol);
+
+            // Add to channel volumes map at default 18%
+            channel_volumes[new_tuner_id] = 18;
+        }
+
+        // Update frequency display to show tuner frequency
+        ui->freqCtrl->setFrequency(freq);
+
+        // Default NFM filter settings
+        int filter_low = -6250;
+        int filter_high = 6250;
+        int max_filter_half_width = 10000;
+
+        // Add marker to plotter for the new tuner at the requested frequency
+        MultiTunerPlotter::TunerMarker marker;
+        marker.tuner_id = new_tuner_id;
+        marker.name = QString("Tuner %1").arg(new_tuner_id);
+        marker.frequency = freq;
+        marker.filter_low = filter_low;
+        marker.filter_high = filter_high;
+        marker.max_filter_half_width = max_filter_half_width;
+        marker.enabled = true;
+        marker.active = true;
+        marker.color = ui->plotter->getDefaultTunerColor(new_tuner_id);
+        ui->plotter->setTunerMarker(new_tuner_id, marker);
+        ui->plotter->setActiveTuner(new_tuner_id);
+        ui->plotter->setMultiTunerEnabled(true);
+
+        // Apply the filter settings to the plotter marker
+        ui->plotter->updateTunerFilter(new_tuner_id, filter_low, filter_high);
+
+        // Refresh the tuner list UI and sync filter width
+        if (tuner_list_widget) {
+            tuner_list_widget->refresh_tuner_list();
+            tuner_list_widget->update_tuner_filter_width(new_tuner_id, filter_low, filter_high);
+        }
+    } else {
+        QMessageBox::warning(this, tr("Error"), tr("Failed to add tuner"));
+    }
+}
+
+void MainWindow::addTunerAtFrequencyWithMode(qint64 freq, QString modulation, QString name)
+{
+    // Normalize various modulation string formats to DockRxOpt canonical names
+    // Sources: TunerRowWidget uses abbreviated ("WFM St"), TunerList uses full ("WFM Stereo"),
+    //          DockRxOpt uses parenthetical ("WFM (stereo)")
+    QString normalizedMod = modulation.trimmed();
+
+    // WFM variants
+    if (normalizedMod.compare("WFM St", Qt::CaseInsensitive) == 0 ||
+        normalizedMod.compare("WFM Stereo", Qt::CaseInsensitive) == 0)
+        normalizedMod = "WFM (stereo)";
+    else if (normalizedMod.compare("WFM", Qt::CaseInsensitive) == 0 ||
+             normalizedMod.compare("WFM Mo", Qt::CaseInsensitive) == 0 ||
+             normalizedMod.compare("WFM Mono", Qt::CaseInsensitive) == 0)
+        normalizedMod = "WFM (mono)";
+    else if (normalizedMod.compare("OIRT", Qt::CaseInsensitive) == 0 ||
+             normalizedMod.compare("WFM OIRT", Qt::CaseInsensitive) == 0 ||
+             normalizedMod.compare("WFM (oirt)", Qt::CaseInsensitive) == 0)
+        normalizedMod = "WFM (oirt)";
+    // NFM variants
+    else if (normalizedMod.compare("NFM", Qt::CaseInsensitive) == 0 ||
+             normalizedMod.compare("FM", Qt::CaseInsensitive) == 0)
+        normalizedMod = "Narrow FM";
+    // AM-Sync variants (note: TunerRowWidget uses "AM Sync" without hyphen)
+    else if (normalizedMod.compare("AM Sync", Qt::CaseInsensitive) == 0 ||
+             normalizedMod.compare("AMSync", Qt::CaseInsensitive) == 0)
+        normalizedMod = "AM-Sync";
+    // Raw I/Q variants
+    else if (normalizedMod.compare("RAW", Qt::CaseInsensitive) == 0 ||
+             normalizedMod.compare("I/Q", Qt::CaseInsensitive) == 0 ||
+             normalizedMod.compare("IQ", Qt::CaseInsensitive) == 0)
+        normalizedMod = "Raw I/Q";
+
+    // Convert modulation string to ReceiverType using DockRxOpt lookup
+    int mode_idx = DockRxOpt::GetEnumForModulationString(normalizedMod);
+    ReceiverType type = ReceiverType::ANALOG_NFM;  // Default
+
+    switch (mode_idx) {
+    case DockRxOpt::MODE_OFF:
+        type = ReceiverType::ANALOG_NFM;  // Can't create an "off" tuner, default to NFM
+        break;
+    case DockRxOpt::MODE_RAW:
+        type = ReceiverType::ANALOG_RAW;
+        break;
+    case DockRxOpt::MODE_AM:
+        type = ReceiverType::ANALOG_AM;
+        break;
+    case DockRxOpt::MODE_AM_SYNC:
+        type = ReceiverType::ANALOG_AMSYNC;
+        break;
+    case DockRxOpt::MODE_LSB:
+        type = ReceiverType::ANALOG_LSB;
+        break;
+    case DockRxOpt::MODE_USB:
+        type = ReceiverType::ANALOG_USB;
+        break;
+    case DockRxOpt::MODE_CWL:
+        type = ReceiverType::ANALOG_CW_L;
+        break;
+    case DockRxOpt::MODE_CWU:
+        type = ReceiverType::ANALOG_CW_U;
+        break;
+    case DockRxOpt::MODE_NFM:
+        type = ReceiverType::ANALOG_NFM;
+        break;
+    case DockRxOpt::MODE_WFM_MONO:
+        type = ReceiverType::ANALOG_WFM_MONO;
+        break;
+    case DockRxOpt::MODE_WFM_STEREO:
+        type = ReceiverType::ANALOG_WFM_STEREO;
+        break;
+    case DockRxOpt::MODE_WFM_STEREO_OIRT:
+        type = ReceiverType::ANALOG_WFM_STEREO_OIRT;
+        break;
+    default:
+        type = ReceiverType::ANALOG_NFM;
+        break;
+    }
+
+    if (!tuner_manager) {
+        QMessageBox::warning(this, tr("Error"), tr("No tuner manager available"));
+        return;
+    }
+
+    // Verify SDR is connected
+    double input_rate = tuner_manager->get_input_rate();
+    if (input_rate <= 0) {
+        QMessageBox::warning(this, tr("Error"),
+            tr("SDR not connected or invalid sample rate.\nInput rate: %1").arg(input_rate));
+        return;
+    }
+
+    channel_id new_tuner_id = tuner_manager->create_channel(ChannelType::MANUAL, type);
+    if (new_tuner_id >= 0) {
+        tuner_manager->set_active_channel(new_tuner_id);
+
+        auto* tuner = tuner_manager->get_channel_impl(new_tuner_id);
+        if (tuner) {
+            qint64 rf_freq = tuner_manager->get_rf_freq();
+            double ddc_offset = (double)(freq - rf_freq - d_lnb_lo);
+            tuner->set_center_freq(ddc_offset);
+
+            // Set channel name if provided
+            if (!name.isEmpty()) {
+                tuner->set_channel_name(name.toStdString());
+            }
+
+            float default_vol = 0.18f;
+            tuner->set_audio_gain(d_main_gain_linear * default_vol);
+            channel_volumes[new_tuner_id] = 18;
+        }
+
+        ui->freqCtrl->setFrequency(freq);
+
+        // Determine filter settings based on type
+        int filter_low = -6250;
+        int filter_high = 6250;
+        int max_filter_half_width = 10000;
+
+        switch (type) {
+        case ReceiverType::ANALOG_NFM:
+            filter_low = -6250;
+            filter_high = 6250;
+            max_filter_half_width = 10000;
+            break;
+        case ReceiverType::ANALOG_AM:
+        case ReceiverType::ANALOG_AMSYNC:
+            filter_low = -5000;
+            filter_high = 5000;
+            max_filter_half_width = 10000;
+            break;
+        case ReceiverType::ANALOG_WFM_MONO:
+        case ReceiverType::ANALOG_WFM_STEREO:
+        case ReceiverType::ANALOG_WFM_STEREO_OIRT:
+            filter_low = -80000;
+            filter_high = 80000;
+            max_filter_half_width = 100000;
+            break;
+        case ReceiverType::ANALOG_USB:
+            filter_low = 0;
+            filter_high = 3000;
+            max_filter_half_width = 4000;
+            break;
+        case ReceiverType::ANALOG_LSB:
+            filter_low = -3000;
+            filter_high = 0;
+            max_filter_half_width = 4000;
+            break;
+        case ReceiverType::ANALOG_CW_U:
+        case ReceiverType::ANALOG_CW_L:
+            filter_low = -250;
+            filter_high = 250;
+            max_filter_half_width = 1000;
+            break;
+        default:
+            break;
+        }
+
+        MultiTunerPlotter::TunerMarker marker;
+        marker.tuner_id = new_tuner_id;
+        marker.name = name.isEmpty() ? QString("Tuner %1").arg(new_tuner_id) : name;
+        marker.frequency = freq;
+        marker.filter_low = filter_low;
+        marker.filter_high = filter_high;
+        marker.max_filter_half_width = max_filter_half_width;
+        marker.enabled = true;
+        marker.active = true;
+        marker.color = ui->plotter->getDefaultTunerColor(new_tuner_id);
+        ui->plotter->setTunerMarker(new_tuner_id, marker);
+        ui->plotter->setActiveTuner(new_tuner_id);
+        ui->plotter->setMultiTunerEnabled(true);
+
+        ui->plotter->updateTunerFilter(new_tuner_id, filter_low, filter_high);
+
         if (tuner_list_widget) {
             tuner_list_widget->refresh_tuner_list();
             tuner_list_widget->update_tuner_filter_width(new_tuner_id, filter_low, filter_high);

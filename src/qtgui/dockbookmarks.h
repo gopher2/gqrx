@@ -68,6 +68,7 @@ public:
 
 signals:
     void newBookmarkActivated(qint64, QString, int);
+    void addTunerRequested(qint64 frequency, QString modulation, QString name);
 
 public slots:
     void setNewFrequency(qint64 rx_freq);
@@ -80,5 +81,6 @@ private slots:
     void on_tableWidgetTagList_itemChanged(QTableWidgetItem* item);
     void ShowContextMenu(const QPoint&pos);
     bool DeleteSelectedBookmark();
+    void AddTunerFromSelectedBookmark();
     void doubleClicked(const QModelIndex & index);
 };

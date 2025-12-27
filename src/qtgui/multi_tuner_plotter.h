@@ -27,6 +27,9 @@
 #include <QColor>
 #include <QBrush>
 #include <QPen>
+#include <QMenu>
+#include <QAction>
+#include <QContextMenuEvent>
 #include <map>
 
 /**
@@ -142,7 +145,14 @@ signals:
     /** Emitted when user double-clicks to set new SDR center frequency */
     void newCenterFreqRequest(qint64 freq);
 
+    /** Emitted when user requests adding a tuner at a frequency via context menu */
+    void addTunerRequested(qint64 frequency);
+
+    /** Emitted when user requests adding a tuner from a bookmark (with mode and name) */
+    void addTunerFromBookmarkRequested(qint64 frequency, QString modulation, QString name);
+
 protected:
+    void contextMenuEvent(QContextMenuEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;

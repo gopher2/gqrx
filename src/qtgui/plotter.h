@@ -219,6 +219,9 @@ protected:
     int         getBookmarkTagsBottomAtX(int xLeft, int xRight) const;
     void        zoomStepX(float factor, int x);
 
+    QList< QPair<QRectF, qint64> >     m_Taglist;  // Bookmark tag rectangles and frequencies
+    qreal       m_DPR{1.0};  // Device pixel ratio
+
 private:
     enum eCapturetype {
         NOCAP,
@@ -291,7 +294,6 @@ private:
     int         m_WaterfallOffset;
     QColor      m_ColorTbl[256];
     QSize       m_Size;
-    qreal       m_DPR{};
     QString     m_HDivText[HORZ_DIVS_MAX+1];
     bool        m_Running;
     bool        m_DrawOverlay;
@@ -361,8 +363,6 @@ private:
     bool        m_FftFill{};
 
     QMap<int,qreal>   m_Peaks;
-
-    QList< QPair<QRectF, qint64> >     m_Taglist;
 
     // Waterfall averaging
     quint64     tlast_wf_ms;        // last time waterfall has been updated
