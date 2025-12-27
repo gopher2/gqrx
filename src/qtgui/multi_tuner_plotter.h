@@ -169,6 +169,7 @@ private:
     void drawTunerMarker(QPainter& painter, const TunerMarker& marker);
     void drawTunerFilter(QPainter& painter, const TunerMarker& marker);
     void drawTunerLabel(QPainter& painter, const TunerMarker& marker, int x, int y);
+    void drawDragExclusionZone(QPainter& painter);
 
     int frequencyToScreenX(qint64 frequency) const;
     qint64 screenXToFrequency(int x) const;
