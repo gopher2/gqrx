@@ -214,6 +214,7 @@ public slots:
     void setPandapterRange(float min, float max);
     void setWaterfallRange(float min, float max);
     void enablePeakDetect(bool enabled);
+    bool isPeakDetectActive() const { return m_PeakDetectActive; }
     void enableBandPlan(bool enable);
     void enableMarkers(bool enabled);
     void setMarkers(qint64 a, qint64 b);

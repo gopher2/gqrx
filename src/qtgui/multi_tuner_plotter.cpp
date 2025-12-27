@@ -631,6 +631,12 @@ void MultiTunerPlotter::mouseDoubleClickEvent(QMouseEvent *event)
         if (m_IqPlaybackActive)
             return;
 
+        // Check if clicking on a peak circle - let parent handle pinned labels
+        if (isPeakDetectActive() && getNearestPeak(event->pos()) != -1) {
+            CPlotter::mouseDoubleClickEvent(event);
+            return;
+        }
+
         // Double-click sets new SDR center frequency
         qint64 freq = screenXToFrequency(event->pos().x());
         emit newCenterFreqRequest(freq);
