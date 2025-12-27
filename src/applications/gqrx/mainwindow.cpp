@@ -2814,11 +2814,57 @@ void MainWindow::startIqPlayback(const QString& filename, float samprate, qint64
     ui->plotter->setSpanFreq((quint32)actual_rate);
 
     // Set center frequency on tuner_manager and frequency display
+    // First capture old RF freq to recalculate tuner offsets
+    qint64 old_rf_freq = 0;
     if (tuner_manager) {
+        old_rf_freq = (qint64)tuner_manager->get_rf_freq();
         tuner_manager->set_rf_freq((double)center_freq);
     }
     ui->freqCtrl->setFrequency(center_freq);
     ui->plotter->setCenterFreq(center_freq);
+
+    // Recalculate ALL tuners' DDC offsets so their absolute frequencies stay the same
+    // Tuners outside the new bandwidth will be bypassed
+    if (tuner_manager && old_rf_freq != 0) {
+        qint64 new_rf_freq = center_freq;
+        qint64 max_offset = (qint64)(actual_rate / 2.0 * 0.95);  // 95% of half sample rate
+
+        auto all_ids = tuner_manager->get_all_channels();
+        for (channel_id id : all_ids) {
+            auto* tuner = tuner_manager->get_channel_impl(id);
+            if (tuner) {
+                // Get this tuner's absolute frequency based on OLD RF center
+                qint64 tuner_abs_freq = old_rf_freq + d_lnb_lo + (qint64)tuner->get_center_freq();
+                // Calculate new offset relative to new RF center
+                qint64 new_offset = tuner_abs_freq - new_rf_freq - d_lnb_lo;
+                tuner->set_center_freq((double)new_offset);
+
+                // Check if tuner is within valid bandwidth
+                bool in_range = std::abs(new_offset) <= max_offset;
+
+                // Set bypass state on the channel
+                tuner->set_bypassed(!in_range);
+
+                // Update marker visibility and position
+                ui->plotter->setTunerMarkerEnabled(id, in_range);
+                ui->plotter->updateTunerFrequency(id, tuner_abs_freq);
+
+                // Update audio gain based on bypass state
+                if (!in_range) {
+                    tuner->set_audio_gain(0.0f);
+                }
+
+                // Update status in tuner list
+                if (tuner_list_widget) {
+                    TunerStatus status = in_range ? TunerStatus::Running : TunerStatus::Bypassed;
+                    if (!tuner->is_enabled()) {
+                        status = TunerStatus::Disabled;
+                    }
+                    tuner_list_widget->update_tuner_status(id, status);
+                }
+            }
+        }
+    }
 
     remote->setBandwidth(actual_rate);
     updateSourceStatusLabels();
@@ -5129,8 +5175,11 @@ void MainWindow::onTunerFrequencyChanged(int tuner_id, qint64 freq)
             if (!is_muted) {
                 auto vol_it = channel_volumes.find(tuner_id);
                 // channel_volumes stores integer percentage (0-100), convert to float (0.0-1.0)
-                float vol = (vol_it != channel_volumes.end()) ? vol_it->second / 100.0f : 0.18f;
-                channel->set_audio_gain(vol);
+                // Default to 18 (same as TunerRowWidget initial value)
+                float channel_vol = (vol_it != channel_volumes.end()) ? vol_it->second / 100.0f : 0.18f;
+                // Apply combined gain (main * channel) - same as onTunerVolumeChanged
+                float final_gain = d_main_gain_linear * channel_vol;
+                channel->set_audio_gain(final_gain);
             }
         }
         if (tuner_list_widget) {
