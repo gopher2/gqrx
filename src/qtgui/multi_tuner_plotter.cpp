@@ -395,6 +395,67 @@ void MultiTunerPlotter::paintEvent(QPaintEvent *event)
         QPainter painter(this);
         drawTunerMarkers(painter);
     }
+
+    // Draw exclusion zone indicator when dragging via handle
+    if (m_DraggedViaHandle && m_IsDraggingTuner) {
+        QPainter painter(this);
+        drawDragExclusionZone(painter);
+    }
+}
+
+void MultiTunerPlotter::drawDragExclusionZone(QPainter& painter)
+{
+    int total_height = height();
+    int fft_height = getFftHeight();
+    int exclusion_zone = total_height / 15;  // ~7% of total height (larger zone)
+
+    int zone_top = fft_height - exclusion_zone;
+    int zone_bottom = fft_height + exclusion_zone;
+
+    // Fill the exclusion zone with semi-transparent yellow tint (visible on dark and light)
+    painter.fillRect(0, zone_top, width(), zone_bottom - zone_top,
+                     QColor(255, 255, 0, 50));  // Yellow, ~20% opacity
+
+    // Draw boundary lines in contrasting color
+    QPen pen(QColor(255, 200, 0, 180));  // Orange-yellow
+    pen.setStyle(Qt::SolidLine);
+    pen.setWidth(1);
+    painter.setPen(pen);
+    painter.drawLine(0, zone_top, width(), zone_top);
+    painter.drawLine(0, zone_bottom, width(), zone_bottom);
+
+    // Draw zoom direction indicators on both sides
+    QFont labelFont("Arial", 12, QFont::Bold);
+    painter.setFont(labelFont);
+    QFontMetrics fm(labelFont);
+
+    QString zoomInText = "↑ Zoom In";
+    QString zoomOutText = "↓ Zoom Out";
+    int zoomInWidth = fm.horizontalAdvance(zoomInText);
+    int zoomOutWidth = fm.horizontalAdvance(zoomOutText);
+    int textHeight = fm.height();
+    int padding = 4;
+
+    // Left side - Zoom In (above zone)
+    QRect leftInRect(10, zone_top - textHeight - padding * 2, zoomInWidth + padding * 2, textHeight + padding);
+    painter.fillRect(leftInRect, QColor(0, 0, 0, 160));
+    painter.setPen(QColor(255, 255, 255, 240));
+    painter.drawText(leftInRect.x() + padding, zone_top - padding - 2, zoomInText);
+
+    // Left side - Zoom Out (below zone)
+    QRect leftOutRect(10, zone_bottom + padding, zoomOutWidth + padding * 2, textHeight + padding);
+    painter.fillRect(leftOutRect, QColor(0, 0, 0, 160));
+    painter.drawText(leftOutRect.x() + padding, zone_bottom + textHeight + padding - 2, zoomOutText);
+
+    // Right side - Zoom In (above zone)
+    QRect rightInRect(width() - zoomInWidth - padding * 2 - 10, zone_top - textHeight - padding * 2, zoomInWidth + padding * 2, textHeight + padding);
+    painter.fillRect(rightInRect, QColor(0, 0, 0, 160));
+    painter.drawText(rightInRect.x() + padding, zone_top - padding - 2, zoomInText);
+
+    // Right side - Zoom Out (below zone)
+    QRect rightOutRect(width() - zoomOutWidth - padding * 2 - 10, zone_bottom + padding, zoomOutWidth + padding * 2, textHeight + padding);
+    painter.fillRect(rightOutRect, QColor(0, 0, 0, 160));
+    painter.drawText(rightOutRect.x() + padding, zone_bottom + textHeight + padding - 2, zoomOutText);
 }
 
 void MultiTunerPlotter::mousePressEvent(QMouseEvent *event)
@@ -519,7 +580,7 @@ void MultiTunerPlotter::mouseMoveEvent(QMouseEvent *event)
                 int total_height = height();
                 int fft_height = getFftHeight();
                 int mouse_y = event->pos().y();
-                int exclusion_zone = total_height / 25;  // 4% of total height
+                int exclusion_zone = total_height / 15;  // ~7% of total height
 
                 // Define exclusion zone around FFT/Waterfall divider
                 int zone_top = fft_height - exclusion_zone;
