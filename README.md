@@ -97,6 +97,19 @@ Import conventional frequencies directly from RadioReference.com's database.
 ![RadioReference import dialog](resources/screenshots/radioreference-import.png)
 *Import frequencies from RadioReference.com by location and category*
 
+### FCC Broadcast Station Import
+
+Import FM radio and TV broadcast stations from the FCC database.
+
+- **Location-Based Search**: Uses device GPS or IP geolocation to find your location
+- **Radius Filter**: Configurable search radius in miles
+- **FM & TV Stations**: Import both FM radio stations and TV broadcast frequencies
+- **Auto-Tagging**: Stations are automatically tagged as "FM Stations" or "TV Stations"
+
+<img src="resources/screenshots/fcc-import.png" width="600" alt="FCC FM/TV import">
+
+*FCC broadcast import showing Detroit area FM and TV stations*
+
 ### FFT Display Enhancements
 
 Customizable FFT display with new annotation features.
@@ -109,6 +122,8 @@ Customizable FFT display with new annotation features.
 - **Smart Arrows**: Leader lines with arrowheads track peak positions
 - **Bookmark Snapping**: Peak labels snap to nearby bookmark frequencies for accuracy
 - **Floating Bookmark Lines**: Bookmark lines float above the FFT signal instead of running to the bottom
+- **Bookmark Clustering**: When bookmarks are close together, they automatically group into a numbered balloon
+- **Click-to-Expand Fan**: Click a cluster balloon to expand bookmarks in a fan pattern for easy selection
 
 <img src="resources/screenshots/fft-settings.png" width="300" alt="FFT Settings panel">
 
@@ -116,6 +131,14 @@ Customizable FFT display with new annotation features.
 
 ![Pinned peak labels](resources/screenshots/pinned-peaks.png)
 *Pinned peak labels with bookmark snapping and leader line arrows*
+
+<img src="resources/screenshots/bookmark-clustering-collapsed.png" width="600" alt="Bookmark clustering collapsed">
+
+*Clustered bookmarks show as numbered balloons - click to expand*
+
+<img src="resources/screenshots/bookmark-clustering-expanded.png" width="600" alt="Bookmark clustering expanded">
+
+*Expanded cluster showing individual bookmarks in a fan pattern*
 
 ### Band Plan Manager
 
