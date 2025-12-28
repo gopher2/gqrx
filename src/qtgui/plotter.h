@@ -30,6 +30,16 @@ struct PinnedPeakInfo {
     QRectF labelRect;    // Current label rect for hit testing
 };
 
+// Info for a bookmark cluster (balloon grouping)
+struct BookmarkCluster {
+    int xCenter;                              // Screen X center of cluster
+    QList<QPair<QString, qint64>> bookmarks;  // name, frequency pairs in cluster
+    QList<QColor> colors;                     // Color for each bookmark
+    QRectF balloonRect;                       // Click rect for collapsed balloon
+    QList<QRectF> expandedRects;              // Click rects for expanded individual balloons
+    QColor color;                             // Color for the cluster balloon
+};
+
 class CPlotter : public QFrame
 {
     Q_OBJECT
@@ -231,7 +241,9 @@ private:
         TAG,
         MARKER_A,
         MARKER_B,
-        PEAK_LABEL
+        PEAK_LABEL,
+        BOOKMARK_CLUSTER,
+        BOOKMARK_EXPANDED
     };
 
     void        drawOverlay();
@@ -377,6 +389,15 @@ private:
     qint64      m_DraggedPeakFreq{};             // Frequency of label being dragged
 
     QList< QPair<QRectF, qint64> >     m_Taglist;
+
+    // Bookmark clustering (balloon grouping)
+    QList<BookmarkCluster> m_BookmarkClusters;  /*!< Clustered bookmark groups */
+    int         m_ExpandedClusterIdx{-1};       /*!< Index of expanded cluster (-1 = none) */
+    int         m_HoveredClusterIdx{-1};        /*!< Index of cluster being hovered (-1 = none) */
+    int         m_ClusterPixelThreshold{80};    /*!< Pixel distance to cluster bookmarks */
+    QRectF      m_ClusterCloseButtonRect;       /*!< Close button rect for expanded cluster */
+    void        showClusterPopup(int clusterIdx);
+    void        hideClusterPopup();
 
     // Waterfall averaging
     quint64     tlast_wf_ms;        // last time waterfall has been updated
