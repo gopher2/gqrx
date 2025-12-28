@@ -52,7 +52,9 @@ public slots:
     void AddNewTag();
     void AddTag(QString name, Qt::CheckState checkstate = Qt::Checked, QColor color = TagInfo::DefaultColor);
     void DeleteSelectedTag();
+    void DeleteSelectedTagAndBookmarks();
     void DeleteTag(const QString& name);
+    void DeleteTagAndBookmarks(const QString& name);
     void SelectAll();
     void DeselectAll();
 };
