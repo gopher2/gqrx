@@ -117,6 +117,7 @@ public:
     }
 
     qint64 getSpan() const { return m_Span; }
+    quint32 getSpanFreq() const { return (quint32)m_Span; }
 
     void setVdivDelta(int delta) { m_VdivDelta = delta; }
 

@@ -35,6 +35,9 @@
 #include <QFileDialog>
 #include <QSvgWidget>
 #include <map>
+#include <QToolButton>
+#include <QMenu>
+#include <QInputDialog>
 
 #include "qtgui/dockrxopt.h"
 #include "qtgui/dockaudio.h"
@@ -181,6 +184,10 @@ private:
     // Main frequency lock button
     QPushButton     *m_main_freq_lock_btn;
 
+    // View presets button
+    QToolButton     *m_view_presets_btn;
+    QMenu           *m_view_presets_menu;
+
     QFont font;
 
 private:
@@ -199,6 +206,9 @@ private:
     void toggleFreezeShortcut();
     void toggleMarkers();
     void onMainFreqLockClicked();
+    /* view presets */
+    void setupViewPresetsMenu();
+    void rebuildViewPresetsMenu();
 
 private slots:
     void onTunerRemoved(int tuner_id);
@@ -235,6 +245,11 @@ private slots:
     void removeTuner();
 
 private slots:
+    /* view presets */
+    void onSaveViewPreset();
+    void onLoadViewPreset(QAction* action);
+    void onDeleteViewPreset();
+    void onClearAllViewPresets();
     /* RecentConfig */
     void loadConfigSlot(const QString &cfgfile);
 
