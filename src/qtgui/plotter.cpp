@@ -189,7 +189,22 @@ CPlotter::CPlotter(QWidget *parent) : QFrame(parent)
 }
 
 CPlotter::~CPlotter()
-= default;
+{
+    hideClusterPopup();
+}
+
+void CPlotter::showClusterPopup(int clusterIdx)
+{
+    // No longer using popup - expansion is drawn in overlay
+    m_ExpandedClusterIdx = clusterIdx;
+    updateOverlay();
+}
+
+void CPlotter::hideClusterPopup()
+{
+    m_ExpandedClusterIdx = -1;
+    updateOverlay();
+}
 
 QSize CPlotter::minimumSizeHint() const
 {
@@ -218,14 +233,46 @@ void CPlotter::mouseMoveEvent(QMouseEvent* event)
         if (event->buttons() == Qt::NoButton)
         {
             bool onTag = false;
+            bool onCluster = false;
+            int hoveredClusterIdx = -1;
+
             if(py < 15 * 10) // FIXME
             {
                 if(m_BookmarksEnabled || m_DXCSpotsEnabled)
                 {
-                    for(int i = 0; i < m_Taglist.size() && !onTag; i++)
+                    // First check for expanded cluster container
+                    if (m_ExpandedClusterIdx >= 0 && m_ExpandedClusterIdx < m_BookmarkClusters.size())
                     {
-                        if (m_Taglist[i].first.contains(ppos))
-                            onTag = true;
+                        const auto& cluster = m_BookmarkClusters[m_ExpandedClusterIdx];
+                        if (cluster.balloonRect.contains(ppos))
+                        {
+                            onCluster = true;
+                            hoveredClusterIdx = m_ExpandedClusterIdx;
+                        }
+                    }
+
+                    // Then check for collapsed cluster balloons (count > 1, not expanded)
+                    for(int i = 0; i < m_BookmarkClusters.size() && !onCluster; i++)
+                    {
+                        const auto& cluster = m_BookmarkClusters[i];
+                        if (cluster.bookmarks.size() > 1 && i != m_ExpandedClusterIdx)
+                        {
+                            if (cluster.balloonRect.contains(ppos))
+                            {
+                                onCluster = true;
+                                hoveredClusterIdx = i;
+                            }
+                        }
+                    }
+
+                    // Then check individual bookmark tags (single or expanded)
+                    if (!onCluster)
+                    {
+                        for(int i = 0; i < m_Taglist.size() && !onTag; i++)
+                        {
+                            if (m_Taglist[i].first.contains(ppos))
+                                onTag = true;
+                        }
                     }
                 }
             }
@@ -241,7 +288,13 @@ void CPlotter::mouseMoveEvent(QMouseEvent* event)
             }
 
             // if no mouse button monitor grab regions and change cursor icon
-            if (onTag)
+            if (onCluster)
+            {
+                setCursor(QCursor(Qt::PointingHandCursor));
+                m_CursorCaptured = BOOKMARK_CLUSTER;
+                m_HoveredClusterIdx = hoveredClusterIdx;
+            }
+            else if (onTag)
             {
                 setCursor(QCursor(Qt::PointingHandCursor));
                 m_CursorCaptured = TAG;
@@ -916,6 +969,56 @@ void CPlotter::mousePressEvent(QMouseEvent * event)
                 }
             }
         }
+        else if (m_CursorCaptured == BOOKMARK_CLUSTER)
+        {
+            // Click on a cluster
+            if (m_HoveredClusterIdx >= 0 && m_HoveredClusterIdx < m_BookmarkClusters.size())
+            {
+                if (m_ExpandedClusterIdx == m_HoveredClusterIdx)
+                {
+                    // Already expanded - check if close button or label clicked
+                    if (m_ClusterCloseButtonRect.contains(ppos))
+                    {
+                        // Close button clicked
+                        hideClusterPopup();
+                    }
+                    else
+                    {
+                        // Check if clicked on a label pill
+                        const auto& cluster = m_BookmarkClusters[m_ExpandedClusterIdx];
+                        bool labelClicked = false;
+                        for (int i = 0; i < cluster.expandedRects.size(); i++)
+                        {
+                            if (cluster.expandedRects[i].contains(ppos))
+                            {
+                                // Activate this bookmark
+                                m_DemodCenterFreq = cluster.bookmarks[i].second;
+                                emit newDemodFreq(m_DemodCenterFreq, m_DemodCenterFreq - m_CenterFreq);
+                                hideClusterPopup();
+                                labelClicked = true;
+                                break;
+                            }
+                        }
+                        // If clicked somewhere in container but not on label or close, do nothing
+                        Q_UNUSED(labelClicked);
+                    }
+                }
+                else
+                {
+                    // Expand this cluster
+                    showClusterPopup(m_HoveredClusterIdx);
+                }
+            }
+        }
+    }
+
+    // Collapse expanded cluster when clicking elsewhere (not on cluster or tag)
+    if (m_ExpandedClusterIdx >= 0 &&
+        m_CursorCaptured != TAG &&
+        m_CursorCaptured != BOOKMARK_CLUSTER &&
+        m_CursorCaptured != BOOKMARK_EXPANDED)
+    {
+        hideClusterPopup();
     }
 }
 
@@ -1030,7 +1133,9 @@ void CPlotter::mouseDoubleClickEvent(QMouseEvent * event)
 // Make a single zoom step on the X axis.
 void CPlotter::zoomStepX(float step, int x)
 {
-
+    // Collapse expanded cluster on zoom
+    if (m_ExpandedClusterIdx >= 0)
+        hideClusterPopup();
 
     // Limit zoom out to 1.0 and zoom in to where there are 5 fft points on the
     // screen. m_fftDataSize is initialized to 0 ... if the app hasn't started
@@ -1132,6 +1237,10 @@ void CPlotter::setWaterfallMode(int mode)
 // Called when a mouse wheel is turned
 void CPlotter::wheelEvent(QWheelEvent * event)
 {
+    // Hide expanded cluster on scroll/zoom
+    if (m_ExpandedClusterIdx >= 0)
+        hideClusterPopup();
+
 #if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
     QPoint pt = QPoint(event->pos());
 #else
@@ -1215,6 +1324,10 @@ void CPlotter::resizeEvent(QResizeEvent* )
 {
     if (!size().isValid())
         return;
+
+    // Hide expanded cluster on resize
+    if (m_ExpandedClusterIdx >= 0)
+        hideClusterPopup();
 
     m_DPR = devicePixelRatioF();
     QSize s = QSize(size().width(), size().height());
@@ -2378,15 +2491,15 @@ void CPlotter::drawOverlay()
     if (m_BookmarksEnabled || m_DXCSpotsEnabled)
     {
         m_Taglist.clear();
+        m_BookmarkClusters.clear();
+
         // Use configurable bookmark font size
         QFont bookmarkFont = painter.font();
         bookmarkFont.setPointSize(m_BookmarkFontSize);
         painter.setFont(bookmarkFont);
         QFontMetricsF fm(bookmarkFont);
         qreal fontHeight = fm.ascent() + 1;
-        qreal slant = 5;
-        qreal levelHeight = fontHeight + 5;
-        qreal nLevels = h / (levelHeight + slant);
+
         if (m_BookmarksEnabled)
         {
             tags = Bookmarks::Get().getBookmarksInRange(m_CenterFreq + m_FftCenter - m_Span / 2,
@@ -2411,41 +2524,57 @@ void CPlotter::drawOverlay()
             }
             std::stable_sort(tags.begin(),tags.end());
         }
-        QVector<int> tagEnd(nLevels + 1);
-        for (auto & tag : tags)
+
+        // Step 1: Cluster bookmarks by pixel proximity
+        for (const auto& tag : tags)
         {
-            x = xFromFreq(tag.frequency);
-            qreal nameWidth = fm.boundingRect(tag.name).width();
+            int tagX = xFromFreq(tag.frequency);
+            bool addedToCluster = false;
 
-            int level = 0;
-            while(level < nLevels && tagEnd[level] > x)
-                level++;
-
-            if(level >= nLevels)
+            // Try to add to existing cluster
+            for (auto& cluster : m_BookmarkClusters)
             {
-                level = 0;
-                if (tagEnd[level] > x)
-                    continue; // no overwrite at level 0
+                if (abs(tagX - cluster.xCenter) < m_ClusterPixelThreshold)
+                {
+                    cluster.bookmarks.append(qMakePair(tag.name, tag.frequency));
+                    cluster.colors.append(tag.GetColor());
+                    // Update center to average
+                    int sumX = 0;
+                    for (const auto& bm : cluster.bookmarks)
+                        sumX += xFromFreq(bm.second);
+                    cluster.xCenter = sumX / cluster.bookmarks.size();
+                    if (cluster.color == Qt::yellow)
+                        cluster.color = tag.GetColor();
+                    addedToCluster = true;
+                    break;
+                }
             }
 
-            tagEnd[level] = x + nameWidth + slant - 1;
+            if (!addedToCluster)
+            {
+                BookmarkCluster newCluster;
+                newCluster.xCenter = tagX;
+                newCluster.bookmarks.append(qMakePair(tag.name, tag.frequency));
+                newCluster.colors.append(tag.GetColor());
+                newCluster.color = tag.GetColor();
+                m_BookmarkClusters.append(newCluster);
+            }
+        }
 
-            const auto levelNHeight = level * levelHeight;
-            const auto levelNHeightBottom = levelNHeight + fontHeight;
-            const auto levelNHeightBottomSlant = levelNHeightBottom + slant;
+        // Step 2: Draw bookmarks - stacked labels for small groups, balloons for crowded areas
+        const qreal thinLine = 0.5 * m_DPR;
+        const int minBalloonSize = 4;  // Only balloon if 4+ bookmarks clustered
+        const qreal slant = 5;
+        const qreal levelHeight = fontHeight + 5;
+        QVector<int> tagEnd(10);  // Track end positions per level - shared across all clusters
 
-            m_Taglist.append(qMakePair(QRectF(x, levelNHeight, nameWidth + slant, fontHeight), tag.frequency));
-
-            QColor color = QColor(tag.GetColor());
-            color.setAlpha(100);
-            // Vertical line - dynamically stop above FFT signal
+        // Helper lambda to calculate dynamic line bottom (stops above FFT signal)
+        const qreal plotHeight = m_2DPixmap.height();
+        const float panddBGainFactor = (float)plotHeight / fabsf(m_PandMaxdB - m_PandMindB);
+        auto calcLineBottom = [&](int ix) -> qreal {
             qreal lineBottom = xAxisTop;
-            const int ix = (int)x;
             if (ix >= 0 && ix < m_fftDataSize)
             {
-                const qreal plotHeight = m_2DPixmap.height();
-                const float panddBGainFactor = (float)plotHeight / fabsf(m_PandMaxdB - m_PandMindB);
-                // Use max hold if active, otherwise current FFT data based on plot mode
                 float fftVal;
                 if (m_MaxHoldActive)
                     fftVal = m_fftMaxHoldBuf[ix];
@@ -2458,35 +2587,382 @@ void CPlotter::drawOverlay()
                     const qreal ySignal = (qreal)std::max(std::min(
                         panddBGainFactor * (m_PandMaxdB - 10.0f * log10f(fftVal)),
                         (float)plotHeight), 0.0f);
-                    // Clearance for peak markers plus padding
                     const qreal clearance = 12.0 * m_DPR + 10.0;
                     lineBottom = std::min(lineBottom, ySignal - clearance);
                 }
             }
-            painter.setPen(QPen(color, m_DPR, Qt::DashLine));
-            painter.drawLine(QPointF(x, levelNHeightBottomSlant), QPointF(x, lineBottom));
+            return lineBottom;
+        };
 
-            // Horizontal line
-            painter.setPen(QPen(color, m_DPR, Qt::SolidLine));
-            painter.drawLine(QPointF(x + slant, levelNHeightBottom),
-                             QPointF(x + nameWidth + slant - 1,
-                             levelNHeightBottom));
-            // Diagonal line
-            painter.drawLine(QPointF(x + 1, levelNHeightBottomSlant - 1),
-                             QPointF(x + slant - 1, levelNHeightBottom + 1));
+        // First pass: calculate expanded fan area (container + lines) if any cluster is expanded
+        QRectF expandedFanRect;
+        if (m_ExpandedClusterIdx >= 0 && m_ExpandedClusterIdx < m_BookmarkClusters.size())
+        {
+            const auto& expCluster = m_BookmarkClusters[m_ExpandedClusterIdx];
+            const int expCount = expCluster.bookmarks.size();
+            const qreal expPadding = 6 * m_DPR;
+            const qreal expLabelSpacing = 4 * m_DPR;
+            const qreal expCloseButtonSize = fontHeight * 0.8;
+            const qreal expContainerPadding = 8 * m_DPR;
 
-            color.setAlpha(255);
-            painter.setPen(QPen(color, 2.0 * m_DPR, Qt::SolidLine));
-            painter.drawText(x + slant, levelNHeight, nameWidth,
-                             fontHeight, Qt::AlignVCenter | Qt::AlignHCenter,
-                             tag.name);
+            qreal expTotalLabelsWidth = 0;
+            for (int bi = 0; bi < expCount; bi++)
+            {
+                qreal lw = fm.boundingRect(expCluster.bookmarks[bi].first).width() + expPadding * 2;
+                expTotalLabelsWidth += lw;
+            }
+            expTotalLabelsWidth += expLabelSpacing * (expCount - 1);
+
+            qreal expContainerW = expTotalLabelsWidth + expContainerPadding * 2 + expCloseButtonSize + expPadding;
+            qreal expContainerX = expCluster.xCenter - expContainerW / 2;
+
+            if (expContainerX < 0) expContainerX = 0;
+            if (expContainerX + expContainerW > w) expContainerX = w - expContainerW;
+
+            // Find min/max frequency X positions for the fan lines
+            int minFreqX = INT_MAX, maxFreqX = INT_MIN;
+            for (int bi = 0; bi < expCount; bi++)
+            {
+                int freqX = xFromFreq(expCluster.bookmarks[bi].second);
+                minFreqX = std::min(minFreqX, freqX);
+                maxFreqX = std::max(maxFreqX, freqX);
+            }
+
+            // Fan area spans from container left/freq min (whichever is less) to container right/freq max
+            qreal fanLeft = std::min((qreal)minFreqX, expContainerX);
+            qreal fanRight = std::max((qreal)maxFreqX, expContainerX + expContainerW);
+            // Fan area goes from very top (0) to xAxisTop to catch all labels and balloons
+            expandedFanRect = QRectF(fanLeft, 0, fanRight - fanLeft, xAxisTop);
         }
+
+        // Pre-pass: calculate all collapsed balloon rects to check label overlap
+        QList<QRectF> collapsedBalloonRects;
+        for (int ci = 0; ci < m_BookmarkClusters.size(); ci++)
+        {
+            const BookmarkCluster& cluster = m_BookmarkClusters[ci];
+            const int count = cluster.bookmarks.size();
+            const int cx = cluster.xCenter;
+
+            // Only for collapsed clusters (4+ bookmarks, not expanded)
+            if (count >= minBalloonSize && ci != m_ExpandedClusterIdx)
+            {
+                // Calculate balloon width (same logic as drawing)
+                int minFreqX = INT_MAX, maxFreqX = INT_MIN;
+                for (int bi = 0; bi < count; bi++)
+                {
+                    int freqX = xFromFreq(cluster.bookmarks[bi].second);
+                    minFreqX = std::min(minFreqX, freqX);
+                    maxFreqX = std::max(maxFreqX, freqX);
+                }
+                qreal freqSpread = maxFreqX - minFreqX;
+                qreal minBalloonW = fm.boundingRect("9999").width() + 12 * m_DPR;
+                qreal maxBalloonW = 200 * m_DPR;
+                qreal spreadBasedW = freqSpread * 0.6 + 20 * m_DPR;
+                qreal balloonW = qBound(minBalloonW, spreadBasedW, maxBalloonW);
+
+                qreal bx = cx - balloonW / 2;
+                if (bx < 0) bx = 0;
+                if (bx + balloonW > w) bx = w - balloonW;
+
+                // Check if this balloon would be hidden by fan
+                QRectF balloonRect(bx, slant, balloonW, fontHeight);
+                if (expandedFanRect.isNull() || !balloonRect.intersects(expandedFanRect))
+                {
+                    collapsedBalloonRects.append(balloonRect);
+                }
+            }
+        }
+
+        for (int ci = 0; ci < m_BookmarkClusters.size(); ci++)
+        {
+            BookmarkCluster& cluster = m_BookmarkClusters[ci];
+            const int count = cluster.bookmarks.size();
+            const int cx = cluster.xCenter;
+
+            if (count < minBalloonSize)
+            {
+                // Draw stacked labels (old style) for small groups
+                for (int bi = 0; bi < count; bi++)
+                {
+                    const auto& bm = cluster.bookmarks[bi];
+                    int x = xFromFreq(bm.second);
+                    qreal nameWidth = fm.boundingRect(bm.first).width();
+
+                    // Find available level, also avoiding collapsed balloons at level 0
+                    int level = 0;
+                    while (level < 10 && tagEnd[level] > x)
+                        level++;
+                    if (level >= 10) level = 0;
+
+                    // Check if this level would overlap with any collapsed balloon
+                    bool overlapsWithBalloon = true;
+                    while (overlapsWithBalloon && level < 10)
+                    {
+                        overlapsWithBalloon = false;
+                        QRectF testRect(x, level * levelHeight, nameWidth + slant, fontHeight + slant);
+                        for (const auto& balloonRect : collapsedBalloonRects)
+                        {
+                            if (testRect.intersects(balloonRect))
+                            {
+                                overlapsWithBalloon = true;
+                                level++;
+                                // Also check tagEnd at new level
+                                while (level < 10 && tagEnd[level] > x)
+                                    level++;
+                                break;
+                            }
+                        }
+                    }
+                    if (level >= 10) level = 0;
+
+                    tagEnd[level] = x + nameWidth + slant - 1;
+
+                    const auto levelNHeight = level * levelHeight;
+                    const auto levelNHeightBottom = levelNHeight + fontHeight;
+                    const auto levelNHeightBottomSlant = levelNHeightBottom + slant;
+
+                    // Check if this label overlaps with expanded fan area - skip if so
+                    QRectF labelRect(x, levelNHeight, nameWidth + slant, levelNHeightBottomSlant);
+                    if (!expandedFanRect.isNull() && labelRect.intersects(expandedFanRect))
+                        continue;
+
+                    m_Taglist.append(qMakePair(QRectF(x, levelNHeight, nameWidth + slant, fontHeight), bm.second));
+
+                    QColor color = (bi < cluster.colors.size()) ? cluster.colors[bi] : cluster.color;
+                    color.setAlpha(100);
+
+                    // Vertical dashed line - stops above FFT signal
+                    painter.setPen(QPen(color, thinLine, Qt::DashLine));
+                    painter.drawLine(QPointF(x, levelNHeightBottomSlant), QPointF(x, calcLineBottom(x)));
+
+                    // Horizontal line
+                    painter.setPen(QPen(color, m_DPR, Qt::SolidLine));
+                    painter.drawLine(QPointF(x + slant, levelNHeightBottom),
+                                     QPointF(x + nameWidth + slant - 1, levelNHeightBottom));
+                    // Diagonal line
+                    painter.drawLine(QPointF(x + 1, levelNHeightBottomSlant - 1),
+                                     QPointF(x + slant - 1, levelNHeightBottom + 1));
+
+                    // Label text
+                    color.setAlpha(255);
+                    painter.setPen(QPen(color, 2.0 * m_DPR, Qt::SolidLine));
+                    painter.drawText(x + slant, levelNHeight, nameWidth, fontHeight,
+                                     Qt::AlignVCenter | Qt::AlignHCenter, bm.first);
+                }
+            }
+            else if (ci == m_ExpandedClusterIdx)
+            {
+                // Expanded cluster - "balloons in a balloon" container
+                // Calculate container dimensions
+                const qreal padding = 6 * m_DPR;
+                const qreal labelSpacing = 4 * m_DPR;
+                const qreal closeButtonSize = fontHeight * 0.8;
+                const qreal containerPadding = 8 * m_DPR;
+
+                // Calculate total width of all labels
+                qreal totalLabelsWidth = 0;
+                QList<qreal> labelWidths;
+                for (int bi = 0; bi < count; bi++)
+                {
+                    qreal lw = fm.boundingRect(cluster.bookmarks[bi].first).width() + padding * 2;
+                    labelWidths.append(lw);
+                    totalLabelsWidth += lw;
+                }
+                totalLabelsWidth += labelSpacing * (count - 1);  // Spacing between labels
+
+                // Container dimensions
+                qreal containerW = totalLabelsWidth + containerPadding * 2 + closeButtonSize + padding;
+                qreal containerH = fontHeight + containerPadding * 2;
+                qreal containerX = cx - containerW / 2;
+                qreal containerY = 2 * m_DPR;  // Near top
+
+                // Keep container on screen
+                if (containerX < 0) containerX = 0;
+                if (containerX + containerW > w) containerX = w - containerW;
+
+                // No shaded background - we hide overlapping elements instead
+
+                // Draw close button (X) in top-right corner
+                qreal closeX = containerX + containerW - closeButtonSize - padding;
+                qreal closeY = containerY + (containerH - closeButtonSize) / 2;
+                m_ClusterCloseButtonRect = QRectF(closeX, closeY, closeButtonSize, closeButtonSize);
+
+                painter.setPen(QPen(QColor(180, 180, 180), 1.5 * m_DPR));
+                qreal xInset = closeButtonSize * 0.25;
+                painter.drawLine(QPointF(closeX + xInset, closeY + xInset),
+                               QPointF(closeX + closeButtonSize - xInset, closeY + closeButtonSize - xInset));
+                painter.drawLine(QPointF(closeX + closeButtonSize - xInset, closeY + xInset),
+                               QPointF(closeX + xInset, closeY + closeButtonSize - xInset));
+
+                // Draw each label and connecting line (matching existing bookmark style)
+                qreal labelX = containerX + containerPadding;
+                qreal labelY = containerY + containerPadding;
+                cluster.expandedRects.clear();
+
+                // Base pivot Y - just below the container
+                qreal basePivotY = containerY + containerH + 10 * m_DPR;
+                // Fan depth - how much lower outer labels pivot
+                qreal fanDepth = 30 * m_DPR;
+
+                for (int bi = 0; bi < count; bi++)
+                {
+                    const auto& bm = cluster.bookmarks[bi];
+                    qreal labelW = labelWidths[bi];
+                    QColor labelColor = (bi < cluster.colors.size()) ? cluster.colors[bi] : cluster.color;
+
+                    // Draw label in existing bookmark style (underline, not pill)
+                    QRectF labelRect(labelX, labelY, labelW, fontHeight);
+                    qreal underlineY = labelY + fontHeight;
+
+                    // Horizontal underline (matching existing label thickness: m_DPR)
+                    labelColor.setAlpha(100);
+                    painter.setPen(QPen(labelColor, m_DPR, Qt::SolidLine));
+                    painter.drawLine(QPointF(labelX, underlineY), QPointF(labelX + labelW, underlineY));
+
+                    // Draw label text
+                    labelColor.setAlpha(255);
+                    painter.setPen(QPen(labelColor, 2.0 * m_DPR, Qt::SolidLine));
+                    painter.drawText(labelRect, Qt::AlignCenter, bm.first);
+
+                    // Store rect for click detection
+                    cluster.expandedRects.append(labelRect);
+
+                    // Calculate entry point on underline based on position:
+                    // Left labels: entry on right side, Right labels: entry on left side
+                    // Distributed evenly across the range
+                    qreal entryFactor = (count > 1) ? (1.0 - (qreal)bi / (qreal)(count - 1)) : 0.5;
+                    qreal entryX = labelX + labelW * entryFactor;
+
+                    // Calculate fan pivot - outer labels pivot lower, middle labels pivot higher
+                    qreal centerIdx = (count - 1) / 2.0;
+                    qreal distFromCenter = qAbs(bi - centerIdx);
+                    qreal maxDist = centerIdx > 0 ? centerIdx : 1;
+                    qreal fanFactor = distFromCenter / maxDist;  // 0 at center, 1 at edges
+                    qreal pivotY = basePivotY + fanDepth * fanFactor;
+
+                    // Draw connecting line: entry point → straight down → pivot → angle → straight down to freq
+                    int freqX = xFromFreq(bm.second);
+
+                    labelColor.setAlpha(100);
+                    painter.setPen(QPen(labelColor, thinLine, Qt::DashLine));
+
+                    // 1. Straight down from entry point on underline to pivot Y
+                    painter.drawLine(QPointF(entryX, underlineY), QPointF(entryX, pivotY));
+                    // 2. Angled line from pivot to frequency X position
+                    qreal angleEndY = pivotY + 15 * m_DPR;
+                    painter.drawLine(QPointF(entryX, pivotY), QPointF(freqX, angleEndY));
+                    // 3. Straight down from there - stops above FFT signal
+                    painter.drawLine(QPointF(freqX, angleEndY), QPointF(freqX, calcLineBottom(freqX)));
+
+                    labelX += labelW + labelSpacing;
+                }
+
+                // Store container rect as balloon rect for hit testing
+                cluster.balloonRect = QRectF(containerX, containerY, containerW, containerH);
+            }
+            else
+            {
+                // Collapsed cluster - dynamic width based on bookmark spread
+                QString countStr = QString::number(count);
+
+                // Find the spread of bookmarks (min and max X positions)
+                int minFreqX = INT_MAX, maxFreqX = INT_MIN;
+                for (int bi = 0; bi < count; bi++)
+                {
+                    int freqX = xFromFreq(cluster.bookmarks[bi].second);
+                    minFreqX = std::min(minFreqX, freqX);
+                    maxFreqX = std::max(maxFreqX, freqX);
+                }
+                qreal freqSpread = maxFreqX - minFreqX;
+
+                // Calculate balloon width: at least as wide as spread, but with min/max limits
+                qreal minBalloonW = fm.boundingRect("9999").width() + 12 * m_DPR;  // Min for count text
+                qreal maxBalloonW = 200 * m_DPR;  // Max reasonable width
+                // Make balloon ~60% of spread for reasonable line angles
+                qreal spreadBasedW = freqSpread * 0.6 + 20 * m_DPR;
+                qreal balloonW = qBound(minBalloonW, spreadBasedW, maxBalloonW);
+
+                qreal balloonH = fontHeight;  // Same height as label font
+                qreal bx = cx - balloonW / 2;
+                qreal by = slant;  // Same top position as labels
+                qreal angleY = by + balloonH + 8 * m_DPR;  // Angle point close to balloon
+
+                // Keep balloon on screen
+                if (bx < 0) bx = 0;
+                if (bx + balloonW > w) bx = w - balloonW;
+
+                QRectF balloonRect(bx, by, balloonW, balloonH);
+
+                // Skip this collapsed balloon if it overlaps with expanded fan area
+                if (!expandedFanRect.isNull() && balloonRect.intersects(expandedFanRect))
+                {
+                    cluster.balloonRect = QRectF();  // Clear rect so it's not clickable
+                    continue;
+                }
+
+                cluster.balloonRect = balloonRect;
+
+                // Reserve space in tagEnd so labels don't draw over balloon
+                tagEnd[0] = std::max(tagEnd[0], (int)(bx + balloonW));
+
+                // Draw lines going to different points along balloon bottom
+                for (int bi = 0; bi < count; bi++)
+                {
+                    QColor lineColor = (bi < cluster.colors.size()) ? cluster.colors[bi] : cluster.color;
+                    lineColor.setAlpha(100);
+                    painter.setPen(QPen(lineColor, thinLine, Qt::DashLine));
+
+                    int freqX = xFromFreq(cluster.bookmarks[bi].second);
+                    // Calculate entry point along balloon bottom (spread across width)
+                    qreal entryX = bx + (balloonW * (bi + 1)) / (count + 1);
+
+                    // Vertical line from bottom up to angle point - stops above FFT signal
+                    painter.drawLine(QPointF(freqX, calcLineBottom(freqX)), QPointF(freqX, angleY));
+                    // Angled line to entry point on balloon bottom
+                    painter.drawLine(QPointF(freqX, angleY), QPointF(entryX, by + balloonH));
+                }
+
+                // Determine balloon color: gray if mixed colors, otherwise use the common color
+                QColor balloonColor = cluster.color;
+                if (cluster.colors.size() > 1)
+                {
+                    bool allSame = true;
+                    QColor firstColor = cluster.colors[0];
+                    for (int i = 1; i < cluster.colors.size(); i++)
+                    {
+                        if (cluster.colors[i] != firstColor)
+                        {
+                            allSame = false;
+                            break;
+                        }
+                    }
+                    if (!allSame)
+                        balloonColor = QColor(128, 128, 128);  // Gray for mixed colors
+                }
+
+                // Draw rounded rectangle balloon (outline only, not solid)
+                painter.setBrush(Qt::NoBrush);
+                painter.setPen(QPen(balloonColor, m_DPR));  // Same thickness as tag lines
+                painter.drawRoundedRect(balloonRect, 4 * m_DPR, 4 * m_DPR);
+
+                // Draw count text (same color as perimeter, slightly smaller)
+                painter.setPen(QPen(balloonColor, m_DPR));
+                QFont countFont = bookmarkFont;
+                countFont.setPointSize(bookmarkFont.pointSize() - 2);
+                countFont.setBold(true);
+                painter.setFont(countFont);
+                painter.drawText(balloonRect, Qt::AlignCenter, countStr);
+                painter.setFont(bookmarkFont);
+            }
+        }
+
         // Restore original font
         painter.setFont(m_Font);
     }
     else
     {
         m_Taglist.clear();
+        m_BookmarkClusters.clear();
     }
 
     m_BandRectList.clear();
@@ -2946,6 +3422,10 @@ void CPlotter::updateOverlay()
 /** Reset horizontal zoom to 100% and centered around 0. */
 void CPlotter::resetHorizontalZoom(void)
 {
+    // Collapse expanded cluster on zoom reset
+    if (m_ExpandedClusterIdx >= 0)
+        hideClusterPopup();
+
     setFftCenterFreq(0);
     setSpanFreq((qint32)m_SampleFreq);
     emit newZoomLevel(1.0);
