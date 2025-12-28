@@ -4185,9 +4185,6 @@ void MainWindow::addTunerAtFrequency(qint64 freq)
             channel_volumes[new_tuner_id] = 18;
         }
 
-        // Update frequency display to show tuner frequency
-        ui->freqCtrl->setFrequency(freq);
-
         // Default NFM filter settings
         int filter_low = -6250;
         int filter_high = 6250;
@@ -4332,8 +4329,6 @@ void MainWindow::addTunerAtFrequencyWithMode(qint64 freq, QString modulation, QS
             tuner->set_audio_gain(d_main_gain_linear * default_vol);
             channel_volumes[new_tuner_id] = 18;
         }
-
-        ui->freqCtrl->setFrequency(freq);
 
         // Determine filter settings based on type
         int filter_low = -6250;
