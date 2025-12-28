@@ -50,10 +50,56 @@
       <item>
        <widget class="QPushButton" name="btnUpdateAmsat">
         <property name="text">
-         <string>Update AMSAT Satellites</string>
+         <string>Import AMSAT</string>
         </property>
         <property name="toolTip">
          <string>Fetch active satellite frequencies from AMSAT database</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnImportRR">
+        <property name="text">
+         <string>Import RR</string>
+        </property>
+        <property name="toolTip">
+         <string>Open Radio Reference import dialog</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnImportFM">
+        <property name="text">
+         <string>Import FM</string>
+        </property>
+        <property name="toolTip">
+         <string>Import FM radio stations from FCC database</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnImportTV">
+        <property name="text">
+         <string>Import TV</string>
+        </property>
+        <property name="toolTip">
+         <string>Import TV stations from FCC database</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnGetLocation">
+        <property name="text">
+         <string>📍</string>
+        </property>
+        <property name="toolTip">
+         <string>Get current location for distance filtering</string>
+        </property>
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
         </property>
        </widget>
       </item>

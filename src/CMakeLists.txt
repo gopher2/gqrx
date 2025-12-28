@@ -67,7 +67,23 @@ endif(WIN32)
 
 ###############################################################################
 # Build the program
-add_executable(${PROJECT_NAME} ${${PROJECT_NAME}_SOURCE} ${UIS_HDRS} ${RESOURCES_LIST})
+if(APPLE)
+    add_executable(${PROJECT_NAME} MACOSX_BUNDLE ${${PROJECT_NAME}_SOURCE} ${UIS_HDRS} ${RESOURCES_LIST})
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST ${CMAKE_SOURCE_DIR}/resources/Info.plist
+        MACOSX_BUNDLE_GUI_IDENTIFIER "dk.gqrx.gqrx"
+        MACOSX_BUNDLE_BUNDLE_NAME "Gqrx"
+    )
+    # Create symlink for command-line convenience: gqrx -> gqrx.app/Contents/MacOS/gqrx
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E create_symlink
+            $<TARGET_BUNDLE_DIR:${PROJECT_NAME}>/Contents/MacOS/${PROJECT_NAME}
+            ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}_cli
+        COMMENT "Creating symlink gqrx_cli -> gqrx.app/Contents/MacOS/gqrx"
+    )
+else()
+    add_executable(${PROJECT_NAME} ${${PROJECT_NAME}_SOURCE} ${UIS_HDRS} ${RESOURCES_LIST})
+endif()
 if(Qt6_FOUND)
     set_property(TARGET ${PROJECT_NAME} PROPERTY CXX_STANDARD 17)
 else()
@@ -83,6 +99,7 @@ if(Qt6_FOUND)
         Qt6::Widgets
         Qt6::Svg
         Qt6::SvgWidgets
+        Qt6::Positioning
     )
 else()
     target_link_libraries(${PROJECT_NAME}
@@ -90,6 +107,7 @@ else()
         Qt5::Network
         Qt5::Widgets
         Qt5::Svg
+        Qt5::Positioning
     )
 endif()
 
@@ -132,4 +150,8 @@ if (WIN32)
 endif (WIN32)
 
 set(INSTALL_DEFAULT_BINDIR "bin" CACHE STRING "Appended to CMAKE_INSTALL_PREFIX")
-install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${INSTALL_DEFAULT_BINDIR})
+if(APPLE)
+    install(TARGETS ${PROJECT_NAME} BUNDLE DESTINATION "." RUNTIME DESTINATION ${INSTALL_DEFAULT_BINDIR})
+else()
+    install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${INSTALL_DEFAULT_BINDIR})
+endif()

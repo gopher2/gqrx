@@ -323,6 +323,7 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     connect(ui->plotter, SIGNAL(lookupFrequencyRequested(qint64)), uiDockRRImport, SLOT(setFrequencyFilter(qint64)));
     connect(ui->plotter, &CPlotter::lookupFrequencyRequested, uiDockRRImport, &QDockWidget::show);
     connect(uiDockRRImport, &DockRRImport::frequenciesImported, uiDockBookmarks, &DockBookmarks::updateBookmarks);
+    connect(uiDockBookmarks, &DockBookmarks::openRadioReferenceRequested, uiDockRRImport, &QDockWidget::show);
 
     //DXC Spots
     connect(&DXCSpots::Get(), SIGNAL(dxcSpotsUpdated()), this, SLOT(updateClusterSpots()));
