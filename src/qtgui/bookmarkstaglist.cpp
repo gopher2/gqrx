@@ -23,6 +23,7 @@
 #include "bookmarkstaglist.h"
 #include "bookmarks.h"
 #include <QColorDialog>
+#include <QMessageBox>
 #include <stdio.h>
 #include <QMenu>
 #include <QHeaderView>
@@ -201,6 +202,13 @@ void BookmarksTagList::ShowContextMenu(const QPoint& pos)
         connect(actionDeleteTag, SIGNAL(triggered()), this, SLOT(DeleteSelectedTag()));
     }
 
+    // Menu "Delete Tag and Bookmarks"
+    {
+        QAction* actionDeleteTagAndBookmarks = new QAction("Delete Tag and All Bookmarks", this);
+        menu->addAction(actionDeleteTagAndBookmarks);
+        connect(actionDeleteTagAndBookmarks, SIGNAL(triggered()), this, SLOT(DeleteSelectedTagAndBookmarks()));
+    }
+
     // Menu "Select All"
     {
         QAction* action = new QAction("Select All", this);
@@ -279,6 +287,64 @@ void BookmarksTagList::DeleteSelectedTag()
 void BookmarksTagList::DeleteTag(const QString& name)
 {
     Bookmarks::Get().removeTag(name);
+    updateTags();
+}
+
+void BookmarksTagList::DeleteSelectedTagAndBookmarks()
+{
+    QModelIndexList selected = selectionModel()->selectedRows();
+    if(selected.empty())
+    {
+        return;
+    }
+    int iRow = selected.first().row();
+    QTableWidgetItem* pItem = item(iRow,1);
+    QString strTagName = pItem->text();
+    DeleteTagAndBookmarks(strTagName);
+}
+
+void BookmarksTagList::DeleteTagAndBookmarks(const QString& name)
+{
+    // Count bookmarks with this tag
+    int count = 0;
+    for (int i = 0; i < Bookmarks::Get().size(); i++)
+    {
+        BookmarkInfo& bm = Bookmarks::Get().getBookmark(i);
+        for (const auto& tag : bm.tags)
+        {
+            if (tag->name == name)
+            {
+                count++;
+                break;
+            }
+        }
+    }
+
+    // Confirm deletion
+    if (QMessageBox::question(this, "Delete Tag and Bookmarks",
+            QString("Delete tag '%1' and %2 bookmark(s)?").arg(name).arg(count),
+            QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes)
+    {
+        return;
+    }
+
+    // Delete all bookmarks that have this tag
+    for (int i = Bookmarks::Get().size() - 1; i >= 0; i--)
+    {
+        BookmarkInfo& bm = Bookmarks::Get().getBookmark(i);
+        for (const auto& tag : bm.tags)
+        {
+            if (tag->name == name)
+            {
+                Bookmarks::Get().remove(i);
+                break;
+            }
+        }
+    }
+
+    // Now remove the tag itself
+    Bookmarks::Get().removeTag(name);
+    Bookmarks::Get().save();
     updateTags();
 }
 

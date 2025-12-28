@@ -96,6 +96,12 @@ DockBookmarks::DockBookmarks(QWidget *parent) :
     // TagList
     updateTags();
 
+    // Tag list buttons
+    connect(ui->btnTagsAll, &QPushButton::clicked,
+            ui->tableWidgetTagList, &BookmarksTagList::SelectAll);
+    connect(ui->btnTagsNone, &QPushButton::clicked,
+            ui->tableWidgetTagList, &BookmarksTagList::DeselectAll);
+
     connect(ui->tableViewFrequencyList, SIGNAL(activated(const QModelIndex &)),
             this, SLOT(activated(const QModelIndex &)));
     connect(ui->tableViewFrequencyList, SIGNAL(doubleClicked(const QModelIndex &)),
