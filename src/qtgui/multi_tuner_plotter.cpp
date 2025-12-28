@@ -786,13 +786,24 @@ void MultiTunerPlotter::contextMenuEvent(QContextMenuEvent *event)
     // Get frequency at click position
     qint64 freq = screenXToFrequency(event->pos().x());
 
+    // Check if clicking on a peak circle (highest priority)
+    bool onPeak = false;
+    qint64 peakFreq = 0;
+    if (isPeakDetectActive()) {
+        int peakX = getNearestPeak(event->pos());
+        if (peakX != -1) {
+            peakFreq = freqFromX(peakX);
+            onPeak = true;
+        }
+    }
+
     // Check if clicking on a bookmark tag label (using m_Taglist from parent)
     BookmarkInfo clickedBookmark;
     bool onBookmark = false;
     qint64 tagFreq = 0;
 
     // First check expanded cluster labels (they take priority)
-    if (m_ExpandedClusterIdx >= 0 && m_ExpandedClusterIdx < m_BookmarkClusters.size()) {
+    if (!onPeak && m_ExpandedClusterIdx >= 0 && m_ExpandedClusterIdx < m_BookmarkClusters.size()) {
         const auto& cluster = m_BookmarkClusters[m_ExpandedClusterIdx];
         for (int i = 0; i < cluster.expandedRects.size() && i < cluster.bookmarks.size(); i++) {
             if (cluster.expandedRects[i].contains(ppos)) {
@@ -804,7 +815,7 @@ void MultiTunerPlotter::contextMenuEvent(QContextMenuEvent *event)
     }
 
     // If not on expanded cluster label, check regular m_Taglist
-    if (!onBookmark) {
+    if (!onPeak && !onBookmark) {
         // m_Taglist contains pairs of (QRectF tag_rect, qint64 frequency)
         for (const auto& tag : m_Taglist) {
             if (tag.first.contains(ppos)) {
@@ -832,8 +843,23 @@ void MultiTunerPlotter::contextMenuEvent(QContextMenuEvent *event)
     QMenu menu(this);
     QAction *addTunerAction = nullptr;
     QAction *addTunerFromBookmarkAction = nullptr;
+    QAction *addTunerAtPeakAction = nullptr;
 
-    if (bookmarkFound) {
+    if (onPeak) {
+        // Show peak-specific option
+        QString peakFreqStr;
+        if (peakFreq >= 1000000000)
+            peakFreqStr = QString("%1 GHz").arg((double)peakFreq / 1e9, 0, 'f', 6);
+        else if (peakFreq >= 1000000)
+            peakFreqStr = QString("%1 MHz").arg((double)peakFreq / 1e6, 0, 'f', 3);
+        else if (peakFreq >= 1000)
+            peakFreqStr = QString("%1 kHz").arg((double)peakFreq / 1e3, 0, 'f', 1);
+        else
+            peakFreqStr = QString("%1 Hz").arg(peakFreq);
+
+        addTunerAtPeakAction = menu.addAction(QString("Add Tuner at Peak %1").arg(peakFreqStr));
+        addTunerAtPeakAction->setData(peakFreq);
+    } else if (bookmarkFound) {
         // Show bookmark-specific option
         addTunerFromBookmarkAction = menu.addAction(
             QString("Add Tuner for '%1' (%2)")
@@ -858,7 +884,9 @@ void MultiTunerPlotter::contextMenuEvent(QContextMenuEvent *event)
 
     QAction *selectedAction = menu.exec(event->globalPos());
 
-    if (selectedAction == addTunerAction && addTunerAction) {
+    if (selectedAction == addTunerAtPeakAction && addTunerAtPeakAction) {
+        emit addTunerRequested(peakFreq);
+    } else if (selectedAction == addTunerAction && addTunerAction) {
         emit addTunerRequested(freq);
     } else if (selectedAction == addTunerFromBookmarkAction && addTunerFromBookmarkAction) {
         emit addTunerFromBookmarkRequested(clickedBookmark.frequency, clickedBookmark.modulation, clickedBookmark.name);
