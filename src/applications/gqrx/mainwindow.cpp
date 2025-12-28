@@ -108,6 +108,22 @@ MainWindow::MainWindow(const QString& cfgfile, bool edit_conf, QWidget *parent) 
     ui->freqCtrl->setup(0, 0, 9999e6, 1, FCTL_UNIT_NONE);
     ui->freqCtrl->setFrequency(144500000);
 
+    // View presets dropdown - to the left of the frequency display
+    m_view_presets_btn = new QToolButton(this);
+    m_view_presets_btn->setText("Preset");
+    m_view_presets_btn->setToolTip("View Presets - Save and recall zoom/center settings");
+    m_view_presets_btn->setPopupMode(QToolButton::InstantPopup);
+    m_view_presets_btn->setStyleSheet("QToolButton { color: #ccc; font-size: 11px; padding: 2px 6px; }"
+                                      "QToolButton:hover { color: #fff; }");
+    m_view_presets_menu = new QMenu(this);
+    m_view_presets_btn->setMenu(m_view_presets_menu);
+    // Insert view presets button into the layout to the left of freqCtrl
+    int idx = ui->horizontalLayout_4->indexOf(ui->freqCtrl);
+    if (idx >= 0) {
+        ui->horizontalLayout_4->insertWidget(idx, m_view_presets_btn);
+    }
+    setupViewPresetsMenu();
+
     d_filter_shape = receiver::FILTER_SHAPE_NORMAL;
 
     /* create receiver object */
@@ -2565,4 +2581,153 @@ void MainWindow::toggleMarkers()
 {
     enableMarkers(!d_show_markers);
     uiDockFft->setMarkersEnabled(d_show_markers);
+}
+
+// ==================== View Presets ====================
+
+void MainWindow::setupViewPresetsMenu()
+{
+    connect(m_view_presets_menu, &QMenu::triggered, this, &MainWindow::onLoadViewPreset);
+    rebuildViewPresetsMenu();
+}
+
+void MainWindow::rebuildViewPresetsMenu()
+{
+    m_view_presets_menu->clear();
+
+    // Save current view action
+    QAction* saveAction = m_view_presets_menu->addAction("💾 Save Current View...");
+    saveAction->setData("__save__");
+
+    m_view_presets_menu->addSeparator();
+
+    // Load saved presets from settings
+    QSettings settings;
+    settings.beginGroup("ViewPresets");
+    QStringList presetNames = settings.childGroups();
+    settings.endGroup();
+
+    if (!presetNames.isEmpty()) {
+        for (const QString& name : presetNames) {
+            settings.beginGroup("ViewPresets/" + name);
+            qint64 centerFreq = settings.value("centerFreq", 0).toLongLong();
+            quint32 span = settings.value("span", 0).toUInt();
+            settings.endGroup();
+
+            // Format: name (center @ span)
+            QString label = QString("%1  (%2 MHz @ %3 kHz)")
+                .arg(name)
+                .arg((double)centerFreq / 1e6, 0, 'f', 3)
+                .arg((double)span / 1e3, 0, 'f', 0);
+            QAction* action = m_view_presets_menu->addAction(label);
+            action->setData(name);
+        }
+
+        m_view_presets_menu->addSeparator();
+
+        // Delete preset submenu
+        QMenu* deleteMenu = m_view_presets_menu->addMenu("🗑️ Delete Preset");
+        for (const QString& name : presetNames) {
+            QAction* delAction = deleteMenu->addAction(name);
+            delAction->setData("__delete__:" + name);
+        }
+
+        // Clear all action
+        QAction* clearAllAction = m_view_presets_menu->addAction("⚠️ Clear All Presets");
+        clearAllAction->setData("__clear_all__");
+    } else {
+        QAction* noPresetsAction = m_view_presets_menu->addAction("(No saved presets)");
+        noPresetsAction->setEnabled(false);
+    }
+}
+
+void MainWindow::onSaveViewPreset()
+{
+    bool ok;
+    QString name = QInputDialog::getText(this, "Save View Preset",
+                                         "Enter a name for this view preset:",
+                                         QLineEdit::Normal, "", &ok);
+    if (!ok || name.isEmpty())
+        return;
+
+    // Sanitize name (remove characters that could cause issues in settings)
+    name = name.simplified();
+    name.replace('/', '_');
+    name.replace('\\', '_');
+
+    // Get current view settings
+    qint64 centerFreq = ui->freqCtrl->getFrequency();
+    quint32 span = ui->plotter->getSpanFreq();
+
+    // Save to settings
+    QSettings settings;
+    settings.beginGroup("ViewPresets/" + name);
+    settings.setValue("centerFreq", centerFreq);
+    settings.setValue("span", span);
+    settings.endGroup();
+
+    rebuildViewPresetsMenu();
+}
+
+void MainWindow::onLoadViewPreset(QAction* action)
+{
+    QString data = action->data().toString();
+
+    if (data == "__save__") {
+        onSaveViewPreset();
+        return;
+    }
+
+    if (data == "__clear_all__") {
+        onClearAllViewPresets();
+        return;
+    }
+
+    if (data.startsWith("__delete__:")) {
+        QString presetName = data.mid(11);  // Remove "__delete__:" prefix
+        QSettings settings;
+        settings.beginGroup("ViewPresets");
+        settings.remove(presetName);
+        settings.endGroup();
+        rebuildViewPresetsMenu();
+        return;
+    }
+
+    if (data.isEmpty() || !action->isEnabled())
+        return;
+
+    // Load preset
+    QString presetName = data;
+    QSettings settings;
+    settings.beginGroup("ViewPresets/" + presetName);
+    qint64 centerFreq = settings.value("centerFreq", 0).toLongLong();
+    quint32 span = settings.value("span", 0).toUInt();
+    settings.endGroup();
+
+    if (centerFreq == 0 || span == 0)
+        return;
+
+    // Apply the view settings
+    setNewFrequency(centerFreq);
+    ui->plotter->setSpanFreq(span);
+    ui->plotter->updateOverlay();
+}
+
+void MainWindow::onDeleteViewPreset()
+{
+    // Handled inline in onLoadViewPreset
+}
+
+void MainWindow::onClearAllViewPresets()
+{
+    QMessageBox::StandardButton reply = QMessageBox::question(
+        this, "Clear All View Presets",
+        "Are you sure you want to delete all saved view presets?",
+        QMessageBox::Yes | QMessageBox::No);
+
+    if (reply == QMessageBox::Yes) {
+        QSettings settings;
+        settings.remove("ViewPresets");
+        rebuildViewPresetsMenu();
+    }
 }

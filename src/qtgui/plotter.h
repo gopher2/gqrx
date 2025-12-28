@@ -101,6 +101,8 @@ public:
         updateOverlay();
     }
 
+    quint32 getSpanFreq() const { return (quint32)m_Span; }
+
     void setVdivDelta(int delta) { m_VdivDelta = delta; }
 
     void setFreqDigits(int digits) { m_FreqDigits = digits>=0 ? digits : 0; }

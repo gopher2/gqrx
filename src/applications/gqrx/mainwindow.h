@@ -32,6 +32,9 @@
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QSvgWidget>
+#include <QToolButton>
+#include <QMenu>
+#include <QInputDialog>
 
 #include "qtgui/dockrxopt.h"
 #include "qtgui/dockaudio.h"
@@ -131,6 +134,10 @@ private:
     // dummy widget to enforce linking to QtSvg
     QSvgWidget      *qsvg_dummy;
 
+    // View presets button
+    QToolButton     *m_view_presets_btn;
+    QMenu           *m_view_presets_menu;
+
     QFont font;
 
 private:
@@ -145,8 +152,16 @@ private:
     void rxOffsetZeroShortcut();
     void toggleFreezeShortcut();
     void toggleMarkers();
+    /* view presets */
+    void setupViewPresetsMenu();
+    void rebuildViewPresetsMenu();
 
 private slots:
+    /* view presets */
+    void onSaveViewPreset();
+    void onLoadViewPreset(QAction* action);
+    void onDeleteViewPreset();
+    void onClearAllViewPresets();
     /* RecentConfig */
     void loadConfigSlot(const QString &cfgfile);
 
