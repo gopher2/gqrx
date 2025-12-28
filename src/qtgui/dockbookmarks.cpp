@@ -48,8 +48,11 @@ DockBookmarks::DockBookmarks(QWidget *parent) :
 
     bookmarksTableModel = new BookmarksTableModel();
     m_networkManager = new QNetworkAccessManager(this);
-    connect(m_networkManager, &QNetworkAccessManager::finished,
-            this, &DockBookmarks::onAmsatDataReceived);
+    m_positionSource = nullptr;
+    m_latitude = 0;
+    m_longitude = 0;
+    m_radiusMiles = 50;
+    m_hasLocation = false;
 
     // Frequency List
     ui->tableViewFrequencyList->setModel(bookmarksTableModel);
@@ -323,18 +326,21 @@ void DockBookmarks::changeBookmarkTags(int row, int /*column*/)
 void DockBookmarks::on_btnUpdateAmsat_clicked()
 {
     ui->btnUpdateAmsat->setEnabled(false);
-    ui->btnUpdateAmsat->setText("Fetching...");
+    ui->btnUpdateAmsat->setText("...");
 
     QUrl url("https://raw.githubusercontent.com/palewire/amateur-satellite-database/main/data/amsat-active-frequencies.json");
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, "gqrx");
-    m_networkManager->get(request);
+    QNetworkReply* reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        onAmsatDataReceived(reply);
+    });
 }
 
 void DockBookmarks::onAmsatDataReceived(QNetworkReply* reply)
 {
     ui->btnUpdateAmsat->setEnabled(true);
-    ui->btnUpdateAmsat->setText("Update AMSAT Satellites");
+    ui->btnUpdateAmsat->setText("AMSAT");
 
     if (reply->error() != QNetworkReply::NoError)
     {
@@ -564,4 +570,406 @@ QString DockBookmarks::mapSatelliteModeToModulation(const QString& mode)
 
     // Default to USB for unknown modes
     return "USB";
+}
+
+void DockBookmarks::on_btnGetLocation_clicked()
+{
+    ui->btnGetLocation->setText("...");
+    ui->btnGetLocation->setEnabled(false);
+    startLocationRequest();
+}
+
+void DockBookmarks::startLocationRequest()
+{
+    if (!m_positionSource)
+    {
+        m_positionSource = QGeoPositionInfoSource::createDefaultSource(this);
+        if (m_positionSource)
+        {
+            connect(m_positionSource, &QGeoPositionInfoSource::positionUpdated,
+                    this, &DockBookmarks::onPositionUpdated);
+            connect(m_positionSource, &QGeoPositionInfoSource::errorOccurred,
+                    this, &DockBookmarks::onPositionError);
+        }
+    }
+
+    if (m_positionSource)
+    {
+        m_positionSource->requestUpdate(10000);  // 10 second timeout
+    }
+    else
+    {
+        // No GPS available, try IP geolocation
+        tryIpGeolocationWithOptions();
+    }
+}
+
+void DockBookmarks::tryIpGeolocationWithOptions()
+{
+    // Note: ip-api.com free tier only supports HTTP
+    QNetworkRequest request(QUrl("http://ip-api.com/json/?fields=status,lat,lon,city,regionName"));
+    QNetworkReply *reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+        ui->btnGetLocation->setText("📍");
+        ui->btnGetLocation->setEnabled(true);
+
+        bool ipSuccess = false;
+        QString cityName;
+
+        if (reply->error() == QNetworkReply::NoError) {
+            QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+            QJsonObject obj = doc.object();
+            if (obj["status"].toString() == "success") {
+                m_latitude = obj["lat"].toDouble();
+                m_longitude = obj["lon"].toDouble();
+                cityName = QString("%1, %2").arg(obj["city"].toString(), obj["regionName"].toString());
+                m_hasLocation = true;
+                ipSuccess = true;
+            }
+        }
+
+        // Show dialog with options
+        QMessageBox msgBox(this);
+        msgBox.setWindowTitle("Set Location");
+        if (ipSuccess) {
+            msgBox.setText(QString("IP-based location detected:\n%1\n(%2, %3)")
+                .arg(cityName)
+                .arg(m_latitude, 0, 'f', 4)
+                .arg(m_longitude, 0, 'f', 4));
+        } else {
+            msgBox.setText("Could not detect location from IP.");
+        }
+        msgBox.setInformativeText("Choose location method:");
+
+        QPushButton *useIpBtn = nullptr;
+        if (ipSuccess) {
+            useIpBtn = msgBox.addButton("Use IP Location", QMessageBox::AcceptRole);
+        }
+        QPushButton *zipBtn = msgBox.addButton("Enter ZIP Code", QMessageBox::ActionRole);
+        QPushButton *manualBtn = msgBox.addButton("Enter Lat/Lon", QMessageBox::ActionRole);
+        msgBox.addButton(QMessageBox::Cancel);
+
+        msgBox.exec();
+
+        if (msgBox.clickedButton() == useIpBtn) {
+            ui->btnGetLocation->setToolTip(
+                QString("Location: %1 (%2, %3)").arg(cityName).arg(m_latitude, 0, 'f', 4).arg(m_longitude, 0, 'f', 4));
+            ui->btnGetLocation->setText(QString("📍 %1").arg(cityName));
+        } else if (msgBox.clickedButton() == zipBtn) {
+            bool ok;
+            QString zip = QInputDialog::getText(this, "Enter ZIP Code",
+                "Enter US ZIP code:", QLineEdit::Normal, "", &ok);
+            if (ok && !zip.isEmpty()) {
+                QNetworkRequest zipReq(QUrl(QString("https://api.zippopotam.us/us/%1").arg(zip.trimmed())));
+                QNetworkReply *zipReply = m_networkManager->get(zipReq);
+                connect(zipReply, &QNetworkReply::finished, this, [this, zipReply]() {
+                    zipReply->deleteLater();
+                    if (zipReply->error() == QNetworkReply::NoError) {
+                        QJsonDocument doc = QJsonDocument::fromJson(zipReply->readAll());
+                        QJsonObject obj = doc.object();
+                        QJsonArray places = obj["places"].toArray();
+                        if (!places.isEmpty()) {
+                            QJsonObject place = places[0].toObject();
+                            m_latitude = place["latitude"].toString().toDouble();
+                            m_longitude = place["longitude"].toString().toDouble();
+                            QString placeName = QString("%1, %2")
+                                .arg(place["place name"].toString())
+                                .arg(place["state abbreviation"].toString());
+                            m_hasLocation = true;
+                            ui->btnGetLocation->setToolTip(
+                                QString("Location: %1 (%2, %3)").arg(placeName).arg(m_latitude, 0, 'f', 4).arg(m_longitude, 0, 'f', 4));
+                            ui->btnGetLocation->setText(QString("📍 %1").arg(placeName));
+                            return;
+                        }
+                    }
+                    QMessageBox::warning(this, "ZIP Lookup Failed", "Could not find location for that ZIP code.");
+                });
+            }
+        } else if (msgBox.clickedButton() == manualBtn) {
+            bool ok;
+            QString input = QInputDialog::getText(this, "Enter Coordinates",
+                "Enter lat, lon (e.g., 41.8781, -87.6298):",
+                QLineEdit::Normal, "", &ok);
+            if (ok && !input.isEmpty()) {
+                QStringList parts = input.split(",");
+                if (parts.size() == 2) {
+                    double lat = parts[0].trimmed().toDouble();
+                    double lon = parts[1].trimmed().toDouble();
+                    // Validate lat/lon ranges
+                    if (lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
+                        m_latitude = lat;
+                        m_longitude = lon;
+                        m_hasLocation = true;
+                        ui->btnGetLocation->setToolTip(
+                            QString("Location: %1, %2").arg(m_latitude, 0, 'f', 4).arg(m_longitude, 0, 'f', 4));
+                        ui->btnGetLocation->setText(QString("📍 %1, %2").arg(m_latitude, 0, 'f', 2).arg(m_longitude, 0, 'f', 2));
+                    } else {
+                        QMessageBox::warning(this, "Invalid Coordinates",
+                            "Latitude must be -90 to 90, longitude must be -180 to 180.");
+                    }
+                }
+            }
+        }
+    });
+}
+
+void DockBookmarks::onPositionUpdated(const QGeoPositionInfo &info)
+{
+    if (info.isValid())
+    {
+        ui->btnGetLocation->setText("📍");
+        ui->btnGetLocation->setEnabled(true);
+
+        m_latitude = info.coordinate().latitude();
+        m_longitude = info.coordinate().longitude();
+        m_hasLocation = true;
+        ui->btnGetLocation->setToolTip(
+            QString("Location: %1, %2").arg(m_latitude, 0, 'f', 4).arg(m_longitude, 0, 'f', 4));
+        ui->btnGetLocation->setText(QString("📍 %1, %2").arg(m_latitude, 0, 'f', 2).arg(m_longitude, 0, 'f', 2));
+        QMessageBox::information(this, "Location Updated",
+            QString("GPS Location: %1, %2").arg(m_latitude, 0, 'f', 4).arg(m_longitude, 0, 'f', 4));
+    }
+    else
+    {
+        tryIpGeolocationWithOptions();
+    }
+}
+
+void DockBookmarks::onPositionError(QGeoPositionInfoSource::Error /*error*/)
+{
+    tryIpGeolocationWithOptions();
+}
+
+double DockBookmarks::haversineDistance(double lat1, double lon1, double lat2, double lon2)
+{
+    const double R = 3958.8;  // Earth's radius in miles
+    double dLat = (lat2 - lat1) * M_PI / 180.0;
+    double dLon = (lon2 - lon1) * M_PI / 180.0;
+    double a = sin(dLat/2) * sin(dLat/2) +
+               cos(lat1 * M_PI / 180.0) * cos(lat2 * M_PI / 180.0) *
+               sin(dLon/2) * sin(dLon/2);
+    double c = 2 * atan2(sqrt(a), sqrt(1-a));
+    return R * c;
+}
+
+void DockBookmarks::on_btnImportRR_clicked()
+{
+    emit openRadioReferenceRequested();
+}
+
+void DockBookmarks::on_btnImportFM_clicked()
+{
+    if (!m_hasLocation)
+    {
+        QMessageBox::warning(this, "Location Required",
+            "Please set your location first using the location button.");
+        return;
+    }
+
+    bool ok;
+    int radius = QInputDialog::getInt(this, "Import FM Stations",
+        "Enter search radius in miles:", 10, 1, 9999, 1, &ok);
+    if (!ok)
+        return;
+
+    m_radiusMiles = radius;
+    ui->btnImportFM->setEnabled(false);
+    ui->btnImportFM->setText("...");
+
+    QUrl url("https://transition.fcc.gov/fcc-bin/fmq?state=&list=4");
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 gqrx-sdr");
+
+    QNetworkReply* reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        onFccDataReceived(reply, true);
+    });
+}
+
+void DockBookmarks::on_btnImportTV_clicked()
+{
+    if (!m_hasLocation)
+    {
+        QMessageBox::warning(this, "Location Required",
+            "Please set your location first using the location button.");
+        return;
+    }
+
+    bool ok;
+    int radius = QInputDialog::getInt(this, "Import TV Stations",
+        "Enter search radius in miles:", 10, 1, 9999, 1, &ok);
+    if (!ok)
+        return;
+
+    m_radiusMiles = radius;
+    ui->btnImportTV->setEnabled(false);
+    ui->btnImportTV->setText("...");
+
+    QUrl url("https://transition.fcc.gov/fcc-bin/tvq?state=&list=4");
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::UserAgentHeader, "Mozilla/5.0 gqrx-sdr");
+
+    QNetworkReply* reply = m_networkManager->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        onFccDataReceived(reply, false);
+    });
+}
+
+void DockBookmarks::onFccDataReceived(QNetworkReply* reply, bool isFM)
+{
+    if (isFM) {
+        ui->btnImportFM->setEnabled(true);
+        ui->btnImportFM->setText("Import FM");
+    } else {
+        ui->btnImportTV->setEnabled(true);
+        ui->btnImportTV->setText("Import TV");
+    }
+
+    if (reply->error() != QNetworkReply::NoError)
+    {
+        QMessageBox::warning(this, isFM ? "FM Import Failed" : "TV Import Failed",
+            QString("Failed to fetch data:\n%1").arg(reply->errorString()));
+        reply->deleteLater();
+        return;
+    }
+
+    QByteArray data = reply->readAll();
+    reply->deleteLater();
+
+    if (data.isEmpty()) {
+        QMessageBox::warning(this, "Import Failed", "Received empty response from FCC server.");
+        return;
+    }
+
+    QString tagName = isFM ? "FM Stations" : "TV Stations";
+
+    // Remove existing bookmarks with this tag
+    for (int i = Bookmarks::Get().size() - 1; i >= 0; i--)
+    {
+        BookmarkInfo& bm = Bookmarks::Get().getBookmark(i);
+        for (const auto& tag : bm.tags)
+        {
+            if (tag->name == tagName)
+            {
+                Bookmarks::Get().remove(i);
+                break;
+            }
+        }
+    }
+
+    TagInfo::sptr stationTag = Bookmarks::Get().findOrAddTag(tagName);
+    stationTag->color = isFM ? QColor("#e57373") : QColor("#64b5f6");
+
+    QString text = QString::fromUtf8(data);
+    QStringList lines = text.split('\n', Qt::SkipEmptyParts);
+
+    // First pass: collect stations and keep only closest per frequency
+    struct StationInfo {
+        QString callsign;
+        qint64 frequency;
+        double distance;
+    };
+    QMap<qint64, StationInfo> closestByFreq;
+
+    for (const QString& line : lines)
+    {
+        if (!line.startsWith('|'))
+            continue;
+
+        QStringList fields = line.split('|');
+
+        if (fields.size() < 27)
+            continue;
+
+        // Only import Licensed stations
+        QString status = fields[9].trimmed();
+        if (status != "LIC")
+            continue;
+
+        QString callsign = fields[1].trimmed();
+        QString freqStr = fields[2].trimmed().replace(" MHz", "");
+
+        double freq = freqStr.toDouble();
+
+        // For TV, field 2 is "-" and field 4 is channel number
+        if (freq < 1 && !isFM && fields.size() > 4)
+        {
+            int channel = fields[4].trimmed().toInt();
+            // Convert TV channel to center frequency (MHz)
+            // VHF-Lo: Ch 2-6 (54-88 MHz, 6 MHz spacing)
+            // VHF-Hi: Ch 7-13 (174-216 MHz, 6 MHz spacing)
+            // UHF: Ch 14-36 (470-608 MHz, 6 MHz spacing)
+            if (channel >= 2 && channel <= 6)
+                freq = 57 + (channel - 2) * 6;  // Ch2=57, Ch3=63, etc.
+            else if (channel >= 7 && channel <= 13)
+                freq = 177 + (channel - 7) * 6;  // Ch7=177, Ch8=183, etc.
+            else if (channel >= 14 && channel <= 36)
+                freq = 473 + (channel - 14) * 6;  // Ch14=473, etc.
+        }
+
+        if (freq < 1)
+            continue;
+
+        // Parse lat/lon from fixed field positions
+        double lat = 0, lon = 0;
+        QString latDir = fields[19].trimmed();
+        QString lonDir = fields[23].trimmed();
+
+        if ((latDir == "N" || latDir == "S") && (lonDir == "W" || lonDir == "E"))
+        {
+            int latDeg = fields[20].trimmed().toInt();
+            int latMin = fields[21].trimmed().toInt();
+            double latSec = fields[22].trimmed().toDouble();
+            lat = latDeg + latMin/60.0 + latSec/3600.0;
+            if (latDir == "S") lat = -lat;
+
+            int lonDeg = fields[24].trimmed().toInt();
+            int lonMin = fields[25].trimmed().toInt();
+            double lonSec = fields[26].trimmed().toDouble();
+            lon = lonDeg + lonMin/60.0 + lonSec/3600.0;
+            if (lonDir == "W") lon = -lon;
+        }
+
+        if (lat == 0 && lon == 0)
+            continue;
+
+        double distance = haversineDistance(m_latitude, m_longitude, lat, lon);
+        if (distance > m_radiusMiles)
+            continue;
+
+        qint64 freqHz = (qint64)(freq * 1e6);
+
+        // Keep only the closest station for each frequency
+        if (!closestByFreq.contains(freqHz) || distance < closestByFreq[freqHz].distance)
+        {
+            StationInfo info;
+            info.callsign = callsign;
+            info.frequency = freqHz;
+            info.distance = distance;
+            closestByFreq[freqHz] = info;
+        }
+    }
+
+    // Second pass: add the closest stations as bookmarks
+    int addedCount = 0;
+    for (const StationInfo& station : closestByFreq)
+    {
+        BookmarkInfo info;
+        info.frequency = station.frequency;
+        info.name = station.callsign;
+        info.modulation = isFM ? "WFM (stereo)" : "WFM (mono)";
+        info.bandwidth = isFM ? 150000 : 6000000;
+        info.tags.append(stationTag);
+        Bookmarks::Get().add(info);
+        addedCount++;
+    }
+
+    Bookmarks::Get().save();
+    bookmarksTableModel->update();
+    updateTags();
+
+    QMessageBox::information(this, isFM ? "FM Import Complete" : "TV Import Complete",
+        QString("Added %1 stations within %2 miles of your location.")
+            .arg(addedCount).arg(m_radiusMiles));
 }

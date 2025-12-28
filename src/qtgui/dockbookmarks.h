@@ -28,6 +28,11 @@
 #include <QNetworkReply>
 #include "qtgui/bookmarkstablemodel.h"
 #include <QItemDelegate>
+#include <QGeoPositionInfoSource>
+#include <QCoreApplication>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+#include <QPermissions>
+#endif
 
 namespace Ui {
     class DockBookmarks;
@@ -54,9 +59,15 @@ private:
     bool               m_updating;
     BookmarksTableModel *bookmarksTableModel;
     QNetworkAccessManager *m_networkManager;
+    QGeoPositionInfoSource *m_positionSource;
+    double             m_latitude;
+    double             m_longitude;
+    double             m_radiusMiles;
+    bool               m_hasLocation;
 
     bool eventFilter(QObject* object, QEvent* event);
     QString mapSatelliteModeToModulation(const QString& mode);
+    double haversineDistance(double lat1, double lon1, double lat2, double lon2);
 
 public:
     explicit DockBookmarks(QWidget *parent = 0);
@@ -73,6 +84,7 @@ public:
 signals:
     void newBookmarkActivated(qint64, QString, int);
     void addTunerRequested(qint64 frequency, QString modulation, QString name);
+    void openRadioReferenceRequested();
 
 public slots:
     void setNewFrequency(qint64 rx_freq);
@@ -89,4 +101,13 @@ private slots:
     void doubleClicked(const QModelIndex & index);
     void on_btnUpdateAmsat_clicked();
     void onAmsatDataReceived(QNetworkReply* reply);
+    void on_btnImportRR_clicked();
+    void on_btnImportFM_clicked();
+    void on_btnImportTV_clicked();
+    void on_btnGetLocation_clicked();
+    void onFccDataReceived(QNetworkReply* reply, bool isFM);
+    void startLocationRequest();
+    void tryIpGeolocationWithOptions();
+    void onPositionUpdated(const QGeoPositionInfo &info);
+    void onPositionError(QGeoPositionInfoSource::Error error);
 };
