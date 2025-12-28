@@ -39,7 +39,8 @@ DockBandplan::DockBandplan(QWidget *parent) :
     ui->tableView->setSelectionBehavior(QAbstractItemView::SelectRows);
     ui->tableView->setSelectionMode(QAbstractItemView::SingleSelection);
     ui->tableView->setAlternatingRowColors(true);
-    ui->tableView->horizontalHeader()->setStretchLastSection(true);
+    ui->tableView->horizontalHeader()->setStretchLastSection(false);
+    ui->tableView->horizontalHeader()->setSectionResizeMode(BandPlanTableModel::COL_NAME, QHeaderView::Stretch);
     ui->tableView->verticalHeader()->setVisible(true);
     ui->tableView->setEditTriggers(QAbstractItemView::SelectedClicked | QAbstractItemView::EditKeyPressed);
 
@@ -50,7 +51,7 @@ DockBandplan::DockBandplan(QWidget *parent) :
     ui->tableView->setColumnWidth(BandPlanTableModel::COL_MAX_FREQ, 100);
     ui->tableView->setColumnWidth(BandPlanTableModel::COL_MODULATION, 80);
     ui->tableView->setColumnWidth(BandPlanTableModel::COL_STEP, 60);
-    ui->tableView->setColumnWidth(BandPlanTableModel::COL_COLOR, 70);
+    ui->tableView->setColumnWidth(BandPlanTableModel::COL_COLOR, 40);
 
     // Context menu
     m_contextMenu = new QMenu(this);
@@ -66,6 +67,8 @@ DockBandplan::DockBandplan(QWidget *parent) :
     connect(ui->tableView, &QTableView::customContextMenuRequested,
             this, &DockBandplan::showContextMenu);
 
+    connect(ui->tableView, &QTableView::clicked,
+            this, &DockBandplan::cellClicked);
     connect(ui->tableView, &QTableView::doubleClicked,
             this, &DockBandplan::doubleClicked);
 
@@ -166,5 +169,27 @@ void DockBandplan::gotoCenterOfBand()
         BandInfo& band = BandPlan::Get().getBand(row);
         qint64 centerFreq = (band.minFrequency + band.maxFrequency) / 2;
         emit newFrequency(centerFreq);
+    }
+}
+
+void DockBandplan::cellClicked(const QModelIndex &index)
+{
+    if (!index.isValid())
+        return;
+
+    // Only handle clicks on the color column
+    if (index.column() != BandPlanTableModel::COL_COLOR)
+        return;
+
+    int row = index.row();
+    if (row < 0 || row >= BandPlan::Get().size())
+        return;
+
+    BandInfo& band = BandPlan::Get().getBand(row);
+    QColor newColor = QColorDialog::getColor(band.color, this, "Select Band Color");
+
+    if (newColor.isValid())
+    {
+        m_tableModel->setData(index, newColor, Qt::EditRole);
     }
 }
