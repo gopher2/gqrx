@@ -260,6 +260,8 @@ protected:
 
     QList< QPair<QRectF, qint64> >     m_Taglist;  // Bookmark tag rectangles and frequencies
     qreal       m_DPR{1.0};  // Device pixel ratio
+    QList<BookmarkCluster> m_BookmarkClusters;  /*!< Clustered bookmark groups */
+    int         m_ExpandedClusterIdx{-1};       /*!< Index of expanded cluster (-1 = none) */
 
 private:
     enum eCapturetype {
@@ -419,9 +421,7 @@ private:
 
     QList< QPair<QRectF, int> >        m_BandRectList;  // Band rectangles with indices for click detection
 
-    // Bookmark clustering (balloon grouping)
-    QList<BookmarkCluster> m_BookmarkClusters;  /*!< Clustered bookmark groups */
-    int         m_ExpandedClusterIdx{-1};       /*!< Index of expanded cluster (-1 = none) */
+    // Bookmark clustering (balloon grouping) - note: m_BookmarkClusters and m_ExpandedClusterIdx are in protected section
     int         m_HoveredClusterIdx{-1};        /*!< Index of cluster being hovered (-1 = none) */
     int         m_ClusterPixelThreshold{80};    /*!< Pixel distance to cluster bookmarks */
     QRectF      m_ClusterCloseButtonRect;       /*!< Close button rect for expanded cluster */

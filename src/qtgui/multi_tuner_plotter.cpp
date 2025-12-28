@@ -791,12 +791,27 @@ void MultiTunerPlotter::contextMenuEvent(QContextMenuEvent *event)
     bool onBookmark = false;
     qint64 tagFreq = 0;
 
-    // m_Taglist contains pairs of (QRectF tag_rect, qint64 frequency)
-    for (const auto& tag : m_Taglist) {
-        if (tag.first.contains(ppos)) {
-            tagFreq = tag.second;
-            onBookmark = true;
-            break;
+    // First check expanded cluster labels (they take priority)
+    if (m_ExpandedClusterIdx >= 0 && m_ExpandedClusterIdx < m_BookmarkClusters.size()) {
+        const auto& cluster = m_BookmarkClusters[m_ExpandedClusterIdx];
+        for (int i = 0; i < cluster.expandedRects.size() && i < cluster.bookmarks.size(); i++) {
+            if (cluster.expandedRects[i].contains(ppos)) {
+                tagFreq = cluster.bookmarks[i].second;
+                onBookmark = true;
+                break;
+            }
+        }
+    }
+
+    // If not on expanded cluster label, check regular m_Taglist
+    if (!onBookmark) {
+        // m_Taglist contains pairs of (QRectF tag_rect, qint64 frequency)
+        for (const auto& tag : m_Taglist) {
+            if (tag.first.contains(ppos)) {
+                tagFreq = tag.second;
+                onBookmark = true;
+                break;
+            }
         }
     }
 
