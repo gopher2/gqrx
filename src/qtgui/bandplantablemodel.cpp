@@ -23,6 +23,7 @@
 #include "bandplantablemodel.h"
 #include <QBrush>
 #include <QLocale>
+#include <QPixmap>
 
 BandPlanTableModel::BandPlanTableModel(QObject *parent)
     : QAbstractTableModel(parent)
@@ -83,6 +84,13 @@ QVariant BandPlanTableModel::data(const QModelIndex &index, int role) const
     {
         return band.visible ? Qt::Checked : Qt::Unchecked;
     }
+    else if (role == Qt::DecorationRole && col == COL_COLOR)
+    {
+        // Show a small color swatch (no text)
+        QPixmap pixmap(16, 16);
+        pixmap.fill(band.color);
+        return pixmap;
+    }
     else if (role == Qt::DisplayRole)
     {
         switch (col)
@@ -98,7 +106,7 @@ QVariant BandPlanTableModel::data(const QModelIndex &index, int role) const
         case COL_STEP:
             return QString::number(band.step);
         case COL_COLOR:
-            return band.color.name();
+            return QVariant();  // No text, just the color swatch
         }
     }
     else if (role == Qt::EditRole)
@@ -116,18 +124,8 @@ QVariant BandPlanTableModel::data(const QModelIndex &index, int role) const
         case COL_STEP:
             return QString::number(band.step);
         case COL_COLOR:
-            return band.color.name();
+            return band.color;  // Return QColor for the dialog
         }
-    }
-    else if (role == Qt::BackgroundRole && col == COL_COLOR)
-    {
-        return QBrush(band.color);
-    }
-    else if (role == Qt::ForegroundRole && col == COL_COLOR)
-    {
-        // Calculate luminance and use white or black text for contrast
-        int luminance = (band.color.red() * 299 + band.color.green() * 587 + band.color.blue() * 114) / 1000;
-        return QBrush(luminance > 128 ? Qt::black : Qt::white);
     }
 
     return QVariant();
@@ -178,7 +176,10 @@ bool BandPlanTableModel::setData(const QModelIndex &index, const QVariant &value
         band.step = strValue.toLongLong();
         break;
     case COL_COLOR:
-        band.color = QColor(strValue);
+        if (value.canConvert<QColor>())
+            band.color = value.value<QColor>();
+        else
+            band.color = QColor(strValue);
         break;
     default:
         return false;
@@ -198,6 +199,10 @@ Qt::ItemFlags BandPlanTableModel::flags(const QModelIndex &index) const
 
     if (index.column() == COL_VISIBLE)
         return Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable;
+
+    // Color column is not directly editable (handled via click -> color dialog)
+    if (index.column() == COL_COLOR)
+        return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
 
     return Qt::ItemIsEditable | Qt::ItemIsEnabled | Qt::ItemIsSelectable;
 }

@@ -49,6 +49,7 @@ public slots:
 private slots:
     void on_addButton_clicked();
     void on_removeButton_clicked();
+    void cellClicked(const QModelIndex &index);
     void doubleClicked(const QModelIndex &index);
     void showContextMenu(const QPoint &pos);
     void deleteSelectedBand();
